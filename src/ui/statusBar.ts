@@ -214,25 +214,13 @@ export class StatusBarProvider {
      * Gets a short display name for a model.
      */
     private getShortName(name: string): string {
-        // Common abbreviations
-        const abbreviations: Record<string, string> = {
-            'Claude Sonnet 4.5 (Thinking)': 'Claude 4.5T',
-            'Claude Opus 4.5 (Thinking)': 'Opus 4.5T',
-            'Gemini 3 Pro (High)': 'G3 Pro H',
-            'Gemini 3 Pro (Low)': 'G3 Pro L',
-            'Gemini 3 Flash': 'G3 Flash',
-            'GPT OSS 120b': 'GPT 120b',
-        };
-
-        if (abbreviations[name]) {
-            return abbreviations[name];
-        }
-
-        // Generic shortening
+        // Dynamic shortening - works with any model name from the API
         const short = name
             .replace(/^Gemini\s+/i, 'G')
             .replace(/^Claude\s+/i, 'C')
             .replace(/\(Thinking\)/i, 'T')
+            .replace(/\(High\)/i, 'H')
+            .replace(/\(Low\)/i, 'L')
             .replace(/\s+/g, ' ');
 
         return short.length > 20 ? short.substring(0, 18) + '..' : short;
