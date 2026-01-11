@@ -22,7 +22,7 @@ export class PollingManager {
     private constructor() {
         // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('antigravityStats.refreshInterval')) {
+            if (e.affectsConfiguration('antigravityUsageStats.refreshInterval')) {
                 this.updateIntervalFromConfig();
                 this.restart();
             }
@@ -143,7 +143,7 @@ export class PollingManager {
      * Updates the interval from VS Code configuration.
      */
     private updateIntervalFromConfig(): void {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const interval = config.get<number>('refreshInterval', 120);
 
         // Clamp to valid range (10-3600 seconds)

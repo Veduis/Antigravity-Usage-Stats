@@ -6,6 +6,8 @@ A VS Code extension for tracking AI model usage quotas in the Antigravity IDE wi
 
 Connects to your local Antigravity language server and displays real-time quota information for all your AI models. See at a glance how much quota you have left and when it resets, directly in your status bar or via a quick-access menu.
 
+For a full tutorial on how to get the most out of this extension, read the official **[Antigravity Usage Stats Guide](https://veduis.com/blog/antigravity-usage-stats)**.
+
 ## Features
 
 - 📊 **Live Quota Tracking** - Real-time data from the Antigravity language server
@@ -14,6 +16,10 @@ Connects to your local Antigravity language server and displays real-time quota 
 - 🎨 **Color-Coded Alerts** - Visual indicators for healthy, warning, and critical quota levels
 - 🔄 **Auto-Refresh** - Configurable polling intervals
 - 📦 **Grouped by Pool** - Models automatically organized by quota pool
+
+![Quick Access Menu](screenshots/quick-pick.png)
+
+![Status Bar with Pinned Models](screenshots/status-bar.png)
 
 ## Installation
 

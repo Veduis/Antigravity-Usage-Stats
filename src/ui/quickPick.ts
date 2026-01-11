@@ -40,7 +40,7 @@ export class QuickPickProvider {
         const items = this.buildItems();
 
         const selected = await vscode.window.showQuickPick(items, {
-            title: '📊 Antigravity Stats',
+            title: '📊 Antigravity Usage Stats',
             placeHolder: 'Select a model or action',
             matchOnDescription: true,
             matchOnDetail: true,
@@ -123,7 +123,7 @@ export class QuickPickProvider {
         }
 
         // Group quotas
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const thresholds = {
             warning: config.get<number>('warningThreshold', 30),
             critical: config.get<number>('criticalThreshold', 10),
@@ -193,16 +193,16 @@ export class QuickPickProvider {
                 vscode.window.showInformationMessage('Antigravity Usage Stats: Quota data refreshed!');
                 break;
             case 'pin':
-                await vscode.commands.executeCommand('antigravityStats.pinModel');
+                await vscode.commands.executeCommand('antigravityUsageStats.pinModel');
                 break;
             case 'unpin':
-                await vscode.commands.executeCommand('antigravityStats.unpinModel');
+                await vscode.commands.executeCommand('antigravityUsageStats.unpinModel');
                 break;
             case 'settings':
-                await vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityStats');
+                await vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityUsageStats');
                 break;
             case 'logs':
-                await vscode.commands.executeCommand('antigravityStats.openLogs');
+                await vscode.commands.executeCommand('antigravityUsageStats.openLogs');
                 break;
             default:
                 if (item.quotaId) {
@@ -225,9 +225,9 @@ export class QuickPickProvider {
             ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
             : 'Unknown';
 
-        const config = vscode.workspace.getConfiguration('antigravityStats');
-        const pinnedModels = config.get<string[]>('pinnedModels', []);
-        const isPinned = pinnedModels.includes(quota.modelName);
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        const statusBarModels = config.get<string[]>('statusBarModels', []);
+        const isPinned = statusBarModels.includes(quota.modelName);
 
         const message = `${icon} ${quota.modelName}\n• ${quota.remaining}/${quota.capacity} (${percent}%)\n• Resets in ${resetInfo}`;
 
@@ -238,12 +238,12 @@ export class QuickPickProvider {
         );
 
         if (action === 'Pin to Status Bar') {
-            const newPinned = [...pinnedModels, quota.modelName];
-            await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+            const newPinned = [...statusBarModels, quota.modelName];
+            await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(`Pinned ${quota.modelName} to status bar`);
         } else if (action === 'Unpin from Status Bar') {
-            const newPinned = pinnedModels.filter(name => name !== quota.modelName);
-            await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+            const newPinned = statusBarModels.filter(name => name !== quota.modelName);
+            await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(`Unpinned ${quota.modelName} from status bar`);
         }
     }

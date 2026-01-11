@@ -2,7 +2,7 @@
   "name": "antigravity-usage-stats",
   "displayName": "Antigravity Usage Stats",
   "description": "Monitor AI model usage quotas in VS Code with status bar indicators and quick access",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "Veduis",
   "license": "MIT",
   "icon": "icon.png",
@@ -32,34 +32,34 @@
   "contributes": {
     "commands": [
       {
-        "command": "antigravityStats.showQuotas",
+        "command": "antigravityUsageStats.showQuotas",
         "title": "Show Quotas",
         "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.refresh",
+        "command": "antigravityUsageStats.refresh",
         "title": "Refresh Quota Data",
         "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.openLogs",
+        "command": "antigravityUsageStats.openLogs",
         "title": "Open Logs",
         "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.pinModel",
+        "command": "antigravityUsageStats.pinModel",
         "title": "Pin Model to Status Bar",
         "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.unpinModel",
+        "command": "antigravityUsageStats.unpinModel",
         "title": "Unpin Model from Status Bar",
         "category": "Antigravity Usage Stats"
       }
     ],
     "keybindings": [
       {
-        "command": "antigravityStats.showQuotas",
+        "command": "antigravityUsageStats.showQuotas",
         "key": "ctrl+shift+q",
         "mac": "cmd+shift+q"
       }
@@ -67,14 +67,14 @@
     "configuration": {
       "title": "Antigravity Usage Stats",
       "properties": {
-        "antigravityStats.refreshInterval": {
+        "antigravityUsageStats.refreshInterval": {
           "type": "number",
           "default": 120,
           "minimum": 10,
           "maximum": 3600,
           "description": "Seconds between auto-refreshes"
         },
-        "antigravityStats.statusBarFormat": {
+        "antigravityUsageStats.statusBarFormat": {
           "type": "string",
           "default": "dot-percent",
           "enum": [
@@ -87,37 +87,46 @@
           ],
           "description": "Format of the status bar display"
         },
-        "antigravityStats.groupingEnabled": {
+        "antigravityUsageStats.groupingEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Group models by quota pools in QuickPick view"
         },
-        "antigravityStats.warningThreshold": {
+        "antigravityUsageStats.warningThreshold": {
           "type": "number",
           "default": 30,
           "minimum": 0,
           "maximum": 100,
           "description": "Yellow alert threshold (%)"
         },
-        "antigravityStats.criticalThreshold": {
+        "antigravityUsageStats.criticalThreshold": {
           "type": "number",
           "default": 10,
           "minimum": 0,
           "maximum": 100,
           "description": "Red alert threshold (%)"
         },
-        "antigravityStats.notificationsEnabled": {
+        "antigravityUsageStats.notificationsEnabled": {
           "type": "boolean",
           "default": true,
           "description": "Show quota alerts"
         },
-        "antigravityStats.pinnedModels": {
+        "antigravityUsageStats.statusBarModels": {
           "type": "array",
           "default": [],
+          "uniqueItems": true,
           "items": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "Claude Sonnet 4.5 (Thinking)",
+              "Claude Opus 4.5 (Thinking)",
+              "Gemini 3 Pro (High)",
+              "Gemini 3 Pro (Low)",
+              "Gemini 3 Flash",
+              "GPT OSS 120b"
+            ]
           },
-          "description": "Model names pinned to the status bar (e.g., ['Claude 3.5 Sonnet', 'Gemini 3 Pro (High)'])"
+          "description": "Models to display in the status bar. Select from available models to monitor their quota."
         }
       }
     }

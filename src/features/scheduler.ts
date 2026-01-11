@@ -130,7 +130,7 @@ export class SchedulerManager {
 
         // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('antigravityStats.autoWakeSchedule')) {
+            if (e.affectsConfiguration('antigravityUsageStats.autoWakeSchedule')) {
                 this.loadFromConfig();
             }
         });
@@ -142,7 +142,7 @@ export class SchedulerManager {
      * Loads schedule from VS Code configuration.
      */
     private loadFromConfig(): void {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const cronExpression = config.get<string>('autoWakeSchedule', '');
 
         if (cronExpression && CronParser.validate(cronExpression)) {
@@ -237,7 +237,7 @@ export class SchedulerManager {
      * Prompts user to configure the schedule.
      */
     public async configure(): Promise<void> {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const current = config.get<string>('autoWakeSchedule', '');
 
         const presets = [

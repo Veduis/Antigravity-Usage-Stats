@@ -30,8 +30,8 @@ export class DashboardPanel {
 
     try {
       const panel = vscode.window.createWebviewPanel(
-        'antigravityStats',
-        'Antigravity Stats',
+        'antigravityUsageStats',
+        'Antigravity Usage Stats',
         column || vscode.ViewColumn.One,
         {
           enableScripts: true,
@@ -86,8 +86,8 @@ export class DashboardPanel {
           'How to Fix'
         ).then(selection => {
           if (selection === 'Open QuickPick') {
-            vscode.commands.executeCommand('antigravityStats.switchMode');
-            vscode.commands.executeCommand('antigravityStats.openDashboard');
+            vscode.commands.executeCommand('antigravityUsageStats.switchMode');
+            vscode.commands.executeCommand('antigravityUsageStats.openDashboard');
           } else if (selection === 'How to Fix') {
             vscode.env.openExternal(vscode.Uri.parse(
               'https://github.com/Veduis/Antigravity-Usage-Stats#troubleshooting'
@@ -100,8 +100,8 @@ export class DashboardPanel {
           'Open QuickPick'
         ).then(selection => {
           if (selection === 'Open QuickPick') {
-            vscode.commands.executeCommand('antigravityStats.switchMode');
-            vscode.commands.executeCommand('antigravityStats.openDashboard');
+            vscode.commands.executeCommand('antigravityUsageStats.switchMode');
+            vscode.commands.executeCommand('antigravityUsageStats.openDashboard');
           }
         });
       }
@@ -114,7 +114,7 @@ export class DashboardPanel {
   private updateContent(): void {
     if (!this.panel) return;
 
-    const config = vscode.workspace.getConfiguration('antigravityStats');
+    const config = vscode.workspace.getConfiguration('antigravityUsageStats');
     const groupingEnabled = config.get<boolean>('groupingEnabled', true);
     const thresholds = {
       warning: config.get<number>('warningThreshold', 30),
@@ -138,7 +138,7 @@ export class DashboardPanel {
         pollingManager.pollNow();
         break;
       case 'openSettings':
-        vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityStats');
+        vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityUsageStats');
         break;
       case 'pinModel':
         // TODO: Implement pinning
@@ -163,7 +163,7 @@ export class DashboardPanel {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-  <title>Antigravity Stats</title>
+  <title>Antigravity Usage Stats</title>
   <style>
     ${this.getStyles()}
   </style>
@@ -171,7 +171,7 @@ export class DashboardPanel {
 <body>
   <div class="container">
     <header class="header">
-      <h1>📊 Antigravity Stats</h1>
+      <h1>📊 Antigravity Usage Stats</h1>
       <div class="header-actions">
         <button class="btn btn-primary" onclick="refresh()">
           🔄 Refresh

@@ -34,11 +34,8 @@ coverage/
 .env.local
 
 # Markdown files (keep README only)
-*.md
-!README.md
 
 # Changelog files (all variations)
-CHANGELOG*
 
 # AI/Editor config files
 .cursorrules

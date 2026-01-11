@@ -1,5 +1,5 @@
 /**
- * Core services for the Antigravity Stats extension.
+ * Core services for the Antigravity Usage Stats extension.
  * Exports all service singletons for use throughout the extension.
  */
 

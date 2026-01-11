@@ -9,6 +9,7 @@
 !dist/**
 !dist/extension.js
 !dist/extension.js.map
+!screenshots/**
 
 # Make sure to exclude these
 node_modules/**

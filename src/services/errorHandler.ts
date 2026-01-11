@@ -167,7 +167,7 @@ export class ErrorHandler {
         const actions: string[] = error.recoverable ? ['Retry', 'Open Logs'] : ['Open Logs'];
 
         const action = await vscode.window.showErrorMessage(
-            `Antigravity Stats: ${error.userMessage}`,
+            `Antigravity Usage Stats: ${error.userMessage}`,
             ...actions
         );
 

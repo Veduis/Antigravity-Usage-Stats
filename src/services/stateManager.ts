@@ -6,7 +6,7 @@ import { logger } from './logger';
  */
 export enum GlobalStateKey {
     LAST_REFRESH_TIME = 'lastRefreshTime',
-    PINNED_MODELS = 'pinnedModels',
+    PINNED_MODELS = 'statusBarModels',
     CUSTOM_NAMES = 'customNames',
     DISPLAY_ORDER = 'displayOrder',
     LAST_QUOTA_DATA = 'lastQuotaData',

@@ -1,5 +1,5 @@
 /**
- * Data layer exports for Antigravity Stats.
+ * Data layer exports for Antigravity Usage Stats.
  */
 
 // Models

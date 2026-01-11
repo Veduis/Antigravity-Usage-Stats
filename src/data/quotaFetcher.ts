@@ -52,7 +52,7 @@ export class QuotaFetcher {
      * Updates thresholds from VS Code configuration.
      */
     public updateThresholdsFromConfig(): void {
-        const vsConfig = vscode.workspace.getConfiguration('antigravityStats');
+        const vsConfig = vscode.workspace.getConfiguration('antigravityUsageStats');
         this.config.thresholds = {
             warning: vsConfig.get<number>('warningThreshold', 30),
             critical: vsConfig.get<number>('criticalThreshold', 10),
@@ -227,7 +227,7 @@ export class QuotaFetcher {
         const mockQuotas: QuotaInfo[] = [
             // Claude Pool
             QuotaHelpers.createQuotaInfo(
-                'claude-3.5-sonnet',
+                'claude-3-5-sonnet',
                 'Claude 3.5 Sonnet',
                 'claude-pool',
                 5,
@@ -236,17 +236,17 @@ export class QuotaFetcher {
                 this.config.thresholds
             ),
             QuotaHelpers.createQuotaInfo(
-                'claude-sonnet-4.5-thinking',
-                'Claude Sonnet 4.5 (Thinking)',
+                'claude-3-opus',
+                'Claude 3 Opus',
                 'claude-pool',
-                35,
+                45,
                 50,
                 resetTime,
                 this.config.thresholds
             ),
             QuotaHelpers.createQuotaInfo(
-                'claude-opus-4.5-thinking',
-                'Claude Opus 4.5 (Thinking)',
+                'claude-3-5-haiku',
+                'Claude 3.5 Haiku',
                 'claude-pool',
                 49,
                 50,
@@ -256,26 +256,17 @@ export class QuotaFetcher {
 
             // Gemini Pro Pool
             QuotaHelpers.createQuotaInfo(
-                'gemini-3-pro-high',
-                'Gemini 3 Pro (High)',
+                'gemini-1-5-pro',
+                'Gemini 1.5 Pro',
                 'gemini-pro-pool',
-                100,
+                45,
                 100,
                 resetTime,
                 this.config.thresholds
             ),
             QuotaHelpers.createQuotaInfo(
-                'gemini-3-pro-low',
-                'Gemini 3 Pro (Low)',
-                'gemini-pro-pool',
-                100,
-                100,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'gemini-2.0-pro',
-                'Gemini 2.0 Pro',
+                'gemini-2-0-flash',
+                'Gemini 2.0 Flash',
                 'gemini-pro-pool',
                 85,
                 100,
@@ -285,25 +276,7 @@ export class QuotaFetcher {
 
             // Gemini Flash Pool
             QuotaHelpers.createQuotaInfo(
-                'gemini-3-flash',
-                'Gemini 3 Flash',
-                'gemini-flash-pool',
-                167,
-                500,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'gemini-2.0-flash',
-                'Gemini 2.0 Flash',
-                'gemini-flash-pool',
-                470,
-                500,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'gemini-1.5-flash',
+                'gemini-1-5-flash',
                 'Gemini 1.5 Flash',
                 'gemini-flash-pool',
                 400,
@@ -314,10 +287,19 @@ export class QuotaFetcher {
 
             // GPT Pool (Media.ml)
             QuotaHelpers.createQuotaInfo(
-                'gpt-o55-1208',
-                'GPT-O55-1208 (Media.ml)',
+                'gpt-4o',
+                'GPT-4o',
                 'gpt-pool',
                 60,
+                100,
+                resetTime,
+                this.config.thresholds
+            ),
+            QuotaHelpers.createQuotaInfo(
+                'gpt-4o-mini',
+                'GPT-4o mini',
+                'gpt-pool',
+                95,
                 100,
                 resetTime,
                 this.config.thresholds

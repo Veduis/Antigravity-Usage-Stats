@@ -59,11 +59,11 @@ export function deactivate(): void {
  */
 function registerCommands(): void {
     commandRegistry.registerMany({
-        'antigravityStats.showQuotas': showQuotas,
-        'antigravityStats.refresh': refreshQuotaData,
-        'antigravityStats.openLogs': openLogs,
-        'antigravityStats.pinModel': pinModel,
-        'antigravityStats.unpinModel': unpinModel,
+        'antigravityUsageStats.showQuotas': showQuotas,
+        'antigravityUsageStats.refresh': refreshQuotaData,
+        'antigravityUsageStats.openLogs': openLogs,
+        'antigravityUsageStats.pinModel': pinModel,
+        'antigravityUsageStats.unpinModel': unpinModel,
     });
 
     logger.debug(`Registered ${commandRegistry.getRegisteredCommands().length} commands`);
@@ -112,8 +112,8 @@ async function pinModel(): Promise<void> {
     }
 
     // Get currently pinned models
-    const config = vscode.workspace.getConfiguration('antigravityStats');
-    const currentlyPinned = new Set(config.get<string[]>('pinnedModels', []));
+    const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+    const currentlyPinned = new Set(config.get<string[]>('statusBarModels', []));
 
     // Create QuickPick items for unpinned models
     const items: vscode.QuickPickItem[] = result.quotas
@@ -137,7 +137,7 @@ async function pinModel(): Promise<void> {
 
     if (selected && selected.length > 0) {
         const newPinned = [...currentlyPinned, ...selected.map(item => item.label)];
-        await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+        await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
         logger.info(`Pinned models: ${selected.map(s => s.label).join(', ')}`);
         vscode.window.showInformationMessage(
             `Pinned ${selected.length} model(s) to status bar`
@@ -152,8 +152,8 @@ async function unpinModel(): Promise<void> {
     logger.info('Opening unpin model selector...');
 
     // Get currently pinned models
-    const config = vscode.workspace.getConfiguration('antigravityStats');
-    const currentlyPinned = config.get<string[]>('pinnedModels', []);
+    const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+    const currentlyPinned = config.get<string[]>('statusBarModels', []);
 
     if (currentlyPinned.length === 0) {
         vscode.window.showInformationMessage('No models are currently pinned.');
@@ -175,7 +175,7 @@ async function unpinModel(): Promise<void> {
     if (selected && selected.length > 0) {
         const selectedNames = new Set(selected.map(item => item.label));
         const newPinned = currentlyPinned.filter(name => !selectedNames.has(name));
-        await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+        await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
         logger.info(`Unpinned models: ${selected.map(s => s.label).join(', ')}`);
         vscode.window.showInformationMessage(
             `Unpinned ${selected.length} model(s) from status bar`

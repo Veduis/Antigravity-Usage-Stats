@@ -1,5 +1,5 @@
 /**
- * Data models for quota information in Antigravity Stats.
+ * Data models for quota information in Antigravity Usage Stats.
  */
 
 /**

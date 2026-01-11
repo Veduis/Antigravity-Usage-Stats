@@ -32,8 +32,8 @@ export class StatusBarProvider {
             vscode.StatusBarAlignment.Right,
             100
         );
-        this.mainStatusBarItem.command = 'antigravityStats.openDashboard';
-        this.mainStatusBarItem.name = 'Antigravity Stats';
+        this.mainStatusBarItem.command = 'antigravityUsageStats.showQuotas';
+        this.mainStatusBarItem.name = 'Antigravity Usage Stats';
     }
 
     /**
@@ -56,8 +56,8 @@ export class StatusBarProvider {
         // Listen for configuration changes
         context.subscriptions.push(
             vscode.workspace.onDidChangeConfiguration(e => {
-                if (e.affectsConfiguration('antigravityStats.statusBarModels') ||
-                    e.affectsConfiguration('antigravityStats.statusBarFormat')) {
+                if (e.affectsConfiguration('antigravityUsageStats.statusBarModels') ||
+                    e.affectsConfiguration('antigravityUsageStats.statusBarFormat')) {
                     this.rebuildModelStatusBars();
                     this.updateDisplay();
                 }
@@ -127,7 +127,7 @@ export class StatusBarProvider {
      * Rebuilds the model-specific status bar items based on settings.
      */
     private rebuildModelStatusBars(): void {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const statusBarModels = config.get<string[]>('statusBarModels', []);
 
         // Get current model names that are pinned
@@ -153,7 +153,7 @@ export class StatusBarProvider {
                 vscode.StatusBarAlignment.Right,
                 priority--
             );
-            item.command = 'antigravityStats.openDashboard';
+            item.command = 'antigravityUsageStats.showQuotas';
             item.name = `Antigravity: ${modelName}`;
 
             if (this.context) {
@@ -178,7 +178,7 @@ export class StatusBarProvider {
         // Update main "Usage" button
         if (this.currentQuotas.length === 0) {
             this.mainStatusBarItem.text = '$(pulse) Usage';
-            this.mainStatusBarItem.tooltip = 'No quota data available. Click to open dashboard.';
+            this.mainStatusBarItem.tooltip = 'No quota data available. Click to show quotas.';
             this.mainStatusBarItem.backgroundColor = undefined;
         } else {
             this.mainStatusBarItem.text = '$(pulse) Usage';
@@ -216,15 +216,12 @@ export class StatusBarProvider {
     private getShortName(name: string): string {
         // Common abbreviations
         const abbreviations: Record<string, string> = {
-            'Claude 3.5 Sonnet': 'Claude 3.5',
             'Claude Sonnet 4.5 (Thinking)': 'Claude 4.5T',
             'Claude Opus 4.5 (Thinking)': 'Opus 4.5T',
             'Gemini 3 Pro (High)': 'G3 Pro H',
             'Gemini 3 Pro (Low)': 'G3 Pro L',
-            'Gemini 2.0 Pro': 'G2 Pro',
             'Gemini 3 Flash': 'G3 Flash',
-            'Gemini 2.0 Flash': 'G2 Flash',
-            'Gemini 1.5 Flash': 'G1.5 Flash',
+            'GPT OSS 120b': 'GPT 120b',
         };
 
         if (abbreviations[name]) {
@@ -232,13 +229,13 @@ export class StatusBarProvider {
         }
 
         // Generic shortening
-        let short = name
+        const short = name
             .replace(/^Gemini\s+/i, 'G')
             .replace(/^Claude\s+/i, 'C')
             .replace(/\(Thinking\)/i, 'T')
             .replace(/\s+/g, ' ');
 
-        return short.length > 12 ? short.substring(0, 10) + '..' : short;
+        return short.length > 20 ? short.substring(0, 18) + '..' : short;
     }
 
     /**
@@ -251,14 +248,14 @@ export class StatusBarProvider {
             ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
             : 'Unknown';
 
-        return `${icon} ${quota.modelName}\n${percent}% remaining\nResets in: ${reset}\n\nClick to open dashboard`;
+        return `${icon} ${quota.modelName}\n${percent}% remaining\nResets in: ${reset}\n\nClick to show quotas`;
     }
 
     /**
      * Formats the full tooltip with all quota information.
      */
     private formatTooltip(): string {
-        const lines = ['**Antigravity Stats**\n'];
+        const lines = ['**Antigravity Usage Stats**\n'];
 
         for (const quota of this.currentQuotas) {
             const icon = QuotaHelpers.getStatusIcon(quota.status);
@@ -270,7 +267,7 @@ export class StatusBarProvider {
             lines.push(`${icon} ${quota.modelName}: ${percent}% (resets in ${reset})`);
         }
 
-        lines.push('\n*Click to open dashboard*');
+        lines.push('\n*Click to show quotas*');
         return lines.join('\n');
     }
 

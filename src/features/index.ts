@@ -1,5 +1,5 @@
 /**
- * Features for Antigravity Stats.
+ * Features for Antigravity Usage Stats.
  */
 
 export { notificationManager, NotificationManager } from './notifications';

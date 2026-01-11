@@ -46,7 +46,7 @@ export class NotificationManager {
      * Checks if notifications are enabled in settings.
      */
     private areNotificationsEnabled(): boolean {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         return config.get<boolean>('notificationsEnabled', true);
     }
 
@@ -54,7 +54,7 @@ export class NotificationManager {
      * Gets threshold configuration.
      */
     private getThresholds(): { warning: number; critical: number } {
-        const config = vscode.workspace.getConfiguration('antigravityStats');
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         return {
             warning: config.get<number>('warningThreshold', 30),
             critical: config.get<number>('criticalThreshold', 10),
@@ -159,10 +159,10 @@ export class NotificationManager {
         const message = `⚠️ ${quota.modelName}: Quota at ${percent}% (${quota.remaining}/${quota.capacity})`;
 
         vscode.window
-            .showWarningMessage(message, 'View Dashboard', 'Dismiss')
+            .showWarningMessage(message, 'View Quotas', 'Dismiss')
             .then(action => {
-                if (action === 'View Dashboard') {
-                    vscode.commands.executeCommand('antigravityStats.openDashboard');
+                if (action === 'View Quotas') {
+                    vscode.commands.executeCommand('antigravityUsageStats.showQuotas');
                 }
             });
 
@@ -177,10 +177,10 @@ export class NotificationManager {
         const message = `🔴 ${quota.modelName}: Quota critically low at ${percent}%!`;
 
         vscode.window
-            .showErrorMessage(message, 'View Dashboard', 'Dismiss')
+            .showErrorMessage(message, 'View Quotas', 'Dismiss')
             .then(action => {
-                if (action === 'View Dashboard') {
-                    vscode.commands.executeCommand('antigravityStats.openDashboard');
+                if (action === 'View Quotas') {
+                    vscode.commands.executeCommand('antigravityUsageStats.showQuotas');
                 }
             });
 
@@ -197,10 +197,10 @@ export class NotificationManager {
         const message = `⛔ ${quota.modelName}: Quota exhausted! ${resetInfo}`;
 
         vscode.window
-            .showErrorMessage(message, 'View Dashboard', 'Dismiss')
+            .showErrorMessage(message, 'View Quotas', 'Dismiss')
             .then(action => {
-                if (action === 'View Dashboard') {
-                    vscode.commands.executeCommand('antigravityStats.openDashboard');
+                if (action === 'View Quotas') {
+                    vscode.commands.executeCommand('antigravityUsageStats.showQuotas');
                 }
             });
 

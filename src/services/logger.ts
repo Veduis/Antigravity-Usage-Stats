@@ -11,7 +11,7 @@ export enum LogLevel {
 }
 
 /**
- * Centralized logging service for the Antigravity Stats extension.
+ * Centralized logging service for the Antigravity Usage Stats extension.
  * Provides timestamped logging with different severity levels.
  */
 export class Logger {
@@ -20,7 +20,7 @@ export class Logger {
     private minLevel: LogLevel = LogLevel.INFO;
 
     private constructor() {
-        this.outputChannel = vscode.window.createOutputChannel('Antigravity Stats');
+        this.outputChannel = vscode.window.createOutputChannel('Antigravity Usage Stats');
     }
 
     /**
