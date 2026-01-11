@@ -1,12 +1,15 @@
 {
-  "name": "antigravity-stats",
-  "displayName": "Antigravity Stats",
+  "name": "antigravity-usage-stats",
+  "displayName": "Antigravity Usage Stats",
   "description": "A customizable dashboard for monitoring AI model usage quotas in VS Code",
   "version": "0.1.0",
-  "publisher": "veduis",
+  "publisher": "Veduis",
+  "license": "MIT",
+  "icon": "icon.png",
+  "homepage": "https://veduis.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/veduis/antigravity-stats"
+    "url": "https://github.com/Veduis/Antigravity-Usage-Stats"
   },
   "engines": {
     "vscode": "^1.90.0"

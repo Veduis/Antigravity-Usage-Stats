@@ -1,0 +1,34 @@
+# Ignore everything by default
+**
+
+# Include only what we need
+!package.json
+!LICENSE
+!README.md
+!icon.png
+!dist/**
+!dist/extension.js
+!dist/extension.js.map
+
+# Make sure to exclude these
+node_modules/**
+src/**
+.vscode/**
+.gemini/**
+.git/**
+out/**
+*.vsix
+*.ts
+*.map
+!dist/*.map
+.gitignore
+.eslintrc.json
+.prettierrc
+tsconfig.json
+esbuild.config.js
+CHANGELOG.md
+TODO.md
+tek-spec.md
+CLAUDE.md
+.cursorrules
+.windsurfrules

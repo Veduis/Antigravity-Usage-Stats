@@ -4,6 +4,8 @@ node_modules/
 # Build outputs
 out/
 dist/
+
+# Packaged extensions
 *.vsix
 
 # TypeScript build info
@@ -30,3 +32,29 @@ coverage/
 # Environment files
 .env
 .env.local
+
+# Markdown files (keep README only)
+*.md
+!README.md
+
+# Changelog files (all variations)
+CHANGELOG*
+
+# AI/Editor config files
+.cursorrules
+.windsurfrules
+CLAUDE.MD
+.gemini/
+
+# Personal and sensitive information
+.env*
+auth.json
+credentials.json
+*.pem
+*.key
+*.pfx
+*.cert
+secrets.json
+
+# Public folder (deprecated)
+PUBLIC/

@@ -35,7 +35,7 @@ export class DashboardPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [],
+        localResourceRoots: [context.extensionUri],
       }
     );
 
