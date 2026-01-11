@@ -1,12 +1,12 @@
 {
   "name": "antigravity-usage-stats",
   "displayName": "Antigravity Usage Stats",
-  "description": "A customizable dashboard for monitoring AI model usage quotas in VS Code",
-  "version": "0.1.0",
+  "description": "Monitor AI model usage quotas in VS Code with status bar indicators and quick access",
+  "version": "0.2.0",
   "publisher": "Veduis",
   "license": "MIT",
   "icon": "icon.png",
-  "homepage": "https://veduis.com",
+  "homepage": "https://veduis.com/blog/antigravity-usage-stats",
   "repository": {
     "type": "git",
     "url": "https://github.com/Veduis/Antigravity-Usage-Stats"
@@ -32,59 +32,41 @@
   "contributes": {
     "commands": [
       {
-        "command": "antigravityStats.openDashboard",
-        "title": "Open Dashboard",
-        "category": "Antigravity Stats"
+        "command": "antigravityStats.showQuotas",
+        "title": "Show Quotas",
+        "category": "Antigravity Usage Stats"
       },
       {
         "command": "antigravityStats.refresh",
         "title": "Refresh Quota Data",
-        "category": "Antigravity Stats"
+        "category": "Antigravity Usage Stats"
       },
       {
         "command": "antigravityStats.openLogs",
         "title": "Open Logs",
-        "category": "Antigravity Stats"
+        "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.switchMode",
-        "title": "Switch Display Mode",
-        "category": "Antigravity Stats"
+        "command": "antigravityStats.pinModel",
+        "title": "Pin Model to Status Bar",
+        "category": "Antigravity Usage Stats"
       },
       {
-        "command": "antigravityStats.configureAutoWake",
-        "title": "Configure Auto Wake",
-        "category": "Antigravity Stats"
-      },
-      {
-        "command": "antigravityStats.selectStatusBarModels",
-        "title": "Select Status Bar Models",
-        "category": "Antigravity Stats"
+        "command": "antigravityStats.unpinModel",
+        "title": "Unpin Model from Status Bar",
+        "category": "Antigravity Usage Stats"
       }
     ],
     "keybindings": [
       {
-        "command": "antigravityStats.openDashboard",
+        "command": "antigravityStats.showQuotas",
         "key": "ctrl+shift+q",
         "mac": "cmd+shift+q"
       }
     ],
     "configuration": {
-      "title": "Antigravity Stats",
+      "title": "Antigravity Usage Stats",
       "properties": {
-        "antigravityStats.displayMode": {
-          "type": "string",
-          "default": "webview",
-          "enum": [
-            "webview",
-            "quickpick"
-          ],
-          "enumDescriptions": [
-            "Visual dashboard in a webview panel",
-            "Keyboard-friendly QuickPick list"
-          ],
-          "description": "Display mode for the quota dashboard"
-        },
         "antigravityStats.refreshInterval": {
           "type": "number",
           "default": 120,
@@ -108,7 +90,7 @@
         "antigravityStats.groupingEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Auto-group models by quota pools"
+          "description": "Group models by quota pools in QuickPick view"
         },
         "antigravityStats.warningThreshold": {
           "type": "number",
@@ -129,31 +111,13 @@
           "default": true,
           "description": "Show quota alerts"
         },
-        "antigravityStats.statusBarModels": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "Model names to display individually in the status bar (e.g., ['Claude 3.5 Sonnet', 'Gemini 3 Pro (High)'])"
-        },
         "antigravityStats.pinnedModels": {
           "type": "array",
           "default": [],
           "items": {
             "type": "string"
           },
-          "description": "Models to pin to the top of the dashboard"
-        },
-        "antigravityStats.autoWakeSchedule": {
-          "type": "string",
-          "default": "",
-          "description": "Cron expression for auto wake-ups"
-        },
-        "antigravityStats.themeOverrides": {
-          "type": "object",
-          "default": {},
-          "description": "Custom color overrides (e.g., { \"progressGreen\": \"#00ff00\" })"
+          "description": "Model names pinned to the status bar (e.g., ['Claude 3.5 Sonnet', 'Gemini 3 Pro (High)'])"
         }
       }
     }

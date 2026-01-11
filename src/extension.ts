@@ -7,7 +7,7 @@ import {
     LogLevel,
 } from './services';
 import { pollingManager, quotaFetcher } from './data';
-import { statusBarProvider, showDashboard, quickPickProvider } from './ui';
+import { statusBarProvider, quickPickProvider } from './ui';
 
 /**
  * Called when the extension is activated.
@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Add logger output channel to subscriptions
     context.subscriptions.push(logger.getOutputChannel());
 
-    logger.info('Antigravity Stats extension is activating...');
+    logger.info('Antigravity Usage Stats extension is activating...');
     logger.info(`VS Code version: ${vscode.version}`);
 
     // Set log level based on development mode
@@ -33,19 +33,19 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     // Register all commands
-    registerCommands(context);
+    registerCommands();
 
     // Start polling
     pollingManager.start();
 
-    logger.info('Antigravity Stats extension activated successfully!');
+    logger.info('Antigravity Usage Stats extension activated successfully!');
 }
 
 /**
  * Called when the extension is deactivated.
  */
 export function deactivate(): void {
-    logger.info('Antigravity Stats extension deactivating...');
+    logger.info('Antigravity Usage Stats extension deactivating...');
     pollingManager.stop();
     logger.dispose();
 }
@@ -57,14 +57,13 @@ export function deactivate(): void {
 /**
  * Registers all extension commands.
  */
-function registerCommands(context: vscode.ExtensionContext): void {
+function registerCommands(): void {
     commandRegistry.registerMany({
-        'antigravityStats.openDashboard': () => openDashboard(context),
+        'antigravityStats.showQuotas': showQuotas,
         'antigravityStats.refresh': refreshQuotaData,
         'antigravityStats.openLogs': openLogs,
-        'antigravityStats.switchMode': switchDisplayMode,
-        'antigravityStats.configureAutoWake': configureAutoWake,
-        'antigravityStats.selectStatusBarModels': selectStatusBarModels,
+        'antigravityStats.pinModel': pinModel,
+        'antigravityStats.unpinModel': unpinModel,
     });
 
     logger.debug(`Registered ${commandRegistry.getRegisteredCommands().length} commands`);
@@ -75,18 +74,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
 // ============================================================================
 
 /**
- * Opens the quota dashboard.
+ * Shows the quota QuickPick interface.
  */
-async function openDashboard(context: vscode.ExtensionContext): Promise<void> {
-    logger.info('Opening dashboard...');
-    const config = vscode.workspace.getConfiguration('antigravityStats');
-    const displayMode = config.get<string>('displayMode', 'webview');
-
-    if (displayMode === 'quickpick') {
-        await quickPickProvider.show();
-    } else {
-        showDashboard(context);
-    }
+async function showQuotas(): Promise<void> {
+    logger.info('Opening quota view...');
+    await quickPickProvider.show();
 }
 
 /**
@@ -95,7 +87,7 @@ async function openDashboard(context: vscode.ExtensionContext): Promise<void> {
 async function refreshQuotaData(): Promise<void> {
     logger.info('Refreshing quota data...');
     await pollingManager.pollNow();
-    vscode.window.showInformationMessage('Antigravity Stats: Quota data refreshed!');
+    vscode.window.showInformationMessage('Antigravity Usage Stats: Quota data refreshed!');
 }
 
 /**
@@ -107,48 +99,10 @@ function openLogs(): void {
 }
 
 /**
- * Switches between display modes (webview/quickpick).
+ * Pins a model to the status bar.
  */
-async function switchDisplayMode(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('antigravityStats');
-    const currentMode = config.get<string>('displayMode', 'webview');
-    const newMode = currentMode === 'webview' ? 'quickpick' : 'webview';
-
-    await config.update('displayMode', newMode, vscode.ConfigurationTarget.Global);
-    logger.info(`Switched display mode from ${currentMode} to ${newMode}`);
-    vscode.window.showInformationMessage(`Antigravity Stats: Display mode set to ${newMode}`);
-}
-
-/**
- * Opens configuration for auto-wake scheduling.
- */
-async function configureAutoWake(): Promise<void> {
-    logger.info('Opening auto-wake configuration...');
-    const config = vscode.workspace.getConfiguration('antigravityStats');
-    const currentSchedule = config.get<string>('autoWakeSchedule', '');
-
-    const schedule = await vscode.window.showInputBox({
-        prompt: 'Enter cron expression for auto wake-up (leave empty to disable)',
-        value: currentSchedule,
-        placeHolder: 'e.g., 0 9 * * * (daily at 9am)',
-    });
-
-    if (schedule !== undefined) {
-        await config.update('autoWakeSchedule', schedule, vscode.ConfigurationTarget.Global);
-        logger.info(`Auto-wake schedule updated: ${schedule || 'disabled'}`);
-        vscode.window.showInformationMessage(
-            schedule
-                ? `Antigravity Stats: Auto-wake scheduled: ${schedule}`
-                : 'Antigravity Stats: Auto-wake disabled'
-        );
-    }
-}
-
-/**
- * Opens a multi-select picker for choosing which models to show in the status bar.
- */
-async function selectStatusBarModels(): Promise<void> {
-    logger.info('Opening status bar model selector...');
+async function pinModel(): Promise<void> {
+    logger.info('Opening pin model selector...');
 
     // Get current quota data
     const result = quotaFetcher.getLastResult();
@@ -157,33 +111,74 @@ async function selectStatusBarModels(): Promise<void> {
         return;
     }
 
-    // Get currently selected models
+    // Get currently pinned models
     const config = vscode.workspace.getConfiguration('antigravityStats');
-    const currentlySelected = new Set(config.get<string[]>('statusBarModels', []));
+    const currentlyPinned = new Set(config.get<string[]>('pinnedModels', []));
 
-    // Create QuickPick items for each model
-    const items: vscode.QuickPickItem[] = result.quotas.map(quota => ({
-        label: quota.modelName,
-        description: `${Math.round(quota.percentRemaining)}% remaining`,
-        picked: currentlySelected.has(quota.modelName),
-    }));
+    // Create QuickPick items for unpinned models
+    const items: vscode.QuickPickItem[] = result.quotas
+        .filter(quota => !currentlyPinned.has(quota.modelName))
+        .map(quota => ({
+            label: quota.modelName,
+            description: `${Math.round(quota.percentRemaining)}% remaining`,
+        }));
 
-    // Show multi-select picker
+    if (items.length === 0) {
+        vscode.window.showInformationMessage('All models are already pinned to the status bar.');
+        return;
+    }
+
+    // Show picker
     const selected = await vscode.window.showQuickPick(items, {
         canPickMany: true,
-        placeHolder: 'Select models to show in status bar',
-        title: 'Status Bar Models',
+        placeHolder: 'Select models to pin to status bar',
+        title: 'Pin Models to Status Bar',
     });
 
-    if (selected !== undefined) {
-        const selectedNames = selected.map(item => item.label);
-        await config.update('statusBarModels', selectedNames, vscode.ConfigurationTarget.Global);
-        logger.info(`Status bar models updated: ${selectedNames.join(', ') || 'none'}`);
+    if (selected && selected.length > 0) {
+        const newPinned = [...currentlyPinned, ...selected.map(item => item.label)];
+        await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+        logger.info(`Pinned models: ${selected.map(s => s.label).join(', ')}`);
         vscode.window.showInformationMessage(
-            selectedNames.length > 0
-                ? `Showing ${selectedNames.length} model(s) in status bar`
-                : 'Status bar models cleared'
+            `Pinned ${selected.length} model(s) to status bar`
         );
     }
 }
 
+/**
+ * Unpins a model from the status bar.
+ */
+async function unpinModel(): Promise<void> {
+    logger.info('Opening unpin model selector...');
+
+    // Get currently pinned models
+    const config = vscode.workspace.getConfiguration('antigravityStats');
+    const currentlyPinned = config.get<string[]>('pinnedModels', []);
+
+    if (currentlyPinned.length === 0) {
+        vscode.window.showInformationMessage('No models are currently pinned.');
+        return;
+    }
+
+    // Create QuickPick items
+    const items: vscode.QuickPickItem[] = currentlyPinned.map(name => ({
+        label: name,
+    }));
+
+    // Show picker
+    const selected = await vscode.window.showQuickPick(items, {
+        canPickMany: true,
+        placeHolder: 'Select models to unpin from status bar',
+        title: 'Unpin Models from Status Bar',
+    });
+
+    if (selected && selected.length > 0) {
+        const selectedNames = new Set(selected.map(item => item.label));
+        const newPinned = currentlyPinned.filter(name => !selectedNames.has(name));
+        await config.update('pinnedModels', newPinned, vscode.ConfigurationTarget.Global);
+        logger.info(`Unpinned models: ${selected.map(s => s.label).join(', ')}`);
+        vscode.window.showInformationMessage(
+            `Unpinned ${selected.length} model(s) from status bar`
+        );
+    }
+}

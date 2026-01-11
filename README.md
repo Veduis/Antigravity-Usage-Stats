@@ -1,19 +1,19 @@
-# Antigravity Stats
+# Antigravity Usage Stats
 
-A VS Code extension for tracking AI model quota usage in the Antigravity IDE.
+A VS Code extension for tracking AI model usage quotas in the Antigravity IDE with status bar indicators and quick access.
 
 ## What It Does
 
-Connects to your local Antigravity language server and displays real-time quota information for all your AI models. See at a glance how much quota you have left and when it resets.
+Connects to your local Antigravity language server and displays real-time quota information for all your AI models. See at a glance how much quota you have left and when it resets, directly in your status bar or via a quick-access menu.
 
 ## Features
 
-- Live quota tracking from the Antigravity language server
-- Status bar indicators for individual models
-- Dashboard view with all models grouped by pool
-- Warning and critical threshold alerts
-- Export quota data to JSON or CSV
-- Per-model status bar toggles
+- 📊 **Live Quota Tracking** - Real-time data from the Antigravity language server
+- 📌 **Status Bar Pinning** - Pin your favorite models to the status bar for instant visibility
+- ⚡ **Quick Access Menu** - Keyboard-friendly QuickPick interface (`Ctrl+Shift+Q`)
+- 🎨 **Color-Coded Alerts** - Visual indicators for healthy, warning, and critical quota levels
+- 🔄 **Auto-Refresh** - Configurable polling intervals
+- 📦 **Grouped by Pool** - Models automatically organized by quota pool
 
 ## Installation
 
@@ -26,8 +26,8 @@ Connects to your local Antigravity language server and displays real-time quota 
 ### From Source
 
 ```bash
-git clone https://github.com/veduis/antigravity-stats.git
-cd antigravity-stats
+git clone https://github.com/veduis/antigravity-usage-stats.git
+cd antigravity-usage-stats
 npm install
 npm run build
 ```
@@ -40,30 +40,53 @@ npm run package
 
 ## Usage
 
-1. Make sure Antigravity is running
-2. The extension auto-connects to the local language server
-3. Click "Usage" in the status bar to open the dashboard
-4. Or press `Ctrl+Shift+Q`
+### Quick Access Menu
 
-### Status Bar Models
+1. Press `Ctrl+Shift+Q` (or `Cmd+Shift+Q` on Mac)
+2. Browse all your models with real-time quota information
+3. Click any model to see details and pin/unpin options
 
-To show individual models in the status bar:
+### Pin Models to Status Bar
 
-1. Run `Ctrl+Shift+P` and type "Select Status Bar Models"
-2. Check the models you want to display
-3. Click OK
+**Option 1: From Quick Access Menu**
 
-Each selected model shows as a separate item with a status dot and percentage.
+1. Press `Ctrl+Shift+Q`
+2. Select "Pin Model"
+3. Choose models to display in the status bar
+
+**Option 2: From Model Details**
+
+1. Press `Ctrl+Shift+Q`
+2. Click any model
+3. Select "Pin to Status Bar"
+
+**Option 3: Via Command**
+
+- Run `Ctrl+Shift+P` > "Antigravity Usage Stats: Pin Model to Status Bar"
+
+Pinned models appear in your status bar with:
+
+- Color-coded status dot (green/yellow/red)
+- Model name
+- Percentage remaining
+
+### Unpin Models
+
+1. Press `Ctrl+Shift+Q`
+2. Select "Unpin Model"
+3. Choose models to remove from status bar
 
 ## Configuration
 
-| Setting             | Default | Description                  |
-| ------------------- | ------- | ---------------------------- |
-| `statusBarModels`   | `[]`    | Models to show in status bar |
-| `refreshInterval`   | `120`   | Seconds between auto-refresh |
-| `warningThreshold`  | `30`    | Yellow alert at this %       |
-| `criticalThreshold` | `10`    | Red alert at this %          |
-| `groupingEnabled`   | `true`  | Group models by quota pool   |
+| Setting                | Default       | Description                  |
+| ---------------------- | ------------- | ---------------------------- |
+| `pinnedModels`         | `[]`          | Models pinned to status bar  |
+| `refreshInterval`      | `120`         | Seconds between auto-refresh |
+| `warningThreshold`     | `30`          | Yellow alert at this %       |
+| `criticalThreshold`    | `10`          | Red alert at this %          |
+| `groupingEnabled`      | `true`        | Group models by quota pool   |
+| `statusBarFormat`      | `dot-percent` | Status bar display format    |
+| `notificationsEnabled` | `true`        | Show quota alerts            |
 
 ## How It Works
 
@@ -74,28 +97,13 @@ The extension finds the running Antigravity language server process, extracts th
 - Antigravity IDE must be running
 - VS Code 1.90.0 or higher
 
-## Troubleshooting
+## Commands
 
-### "Could not register service worker" Error
-
-If you see an error like "Could not register service worker: InvalidStateError" when opening the dashboard, this is a known VS Code issue, not a problem with this extension.
-
-**Quick Fixes:**
-
-1. **Restart VS Code completely**
-   - Close ALL VS Code windows
-   - On Linux/Mac: Run `killall code` in terminal (may need to repeat)
-   - On Windows: End all "Code.exe" processes in Task Manager
-   - Relaunch VS Code
-
-2. **Clear VS Code cache**
-   - Linux: Delete contents of `~/.config/Code/Cache`, `CachedData`, and `GPUCache`
-   - Windows: `%APPDATA%\Code\Cache`, `CachedData`, and `GPUCache`
-   - macOS: `~/Library/Application Support/Code/Cache`, `CachedData`, and `GPUCache`
-
-3. **Use QuickPick mode as fallback**
-   - Run `Ctrl+Shift+P` → "Antigravity Stats: Switch Display Mode"
-   - This switches to a keyboard-friendly list view that doesn't use webviews
+- **Show Quotas** (`Ctrl+Shift+Q`) - Open the quick access menu
+- **Pin Model to Status Bar** - Add a model to the status bar
+- **Unpin Model from Status Bar** - Remove a model from the status bar
+- **Refresh Quota Data** - Manually refresh all quota information
+- **Open Logs** - View extension logs for troubleshooting
 
 ## License
 
