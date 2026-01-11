@@ -57,13 +57,13 @@ Each selected model shows as a separate item with a status dot and percentage.
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `statusBarModels` | `[]` | Models to show in status bar |
-| `refreshInterval` | `120` | Seconds between auto-refresh |
-| `warningThreshold` | `30` | Yellow alert at this % |
-| `criticalThreshold` | `10` | Red alert at this % |
-| `groupingEnabled` | `true` | Group models by quota pool |
+| Setting             | Default | Description                  |
+| ------------------- | ------- | ---------------------------- |
+| `statusBarModels`   | `[]`    | Models to show in status bar |
+| `refreshInterval`   | `120`   | Seconds between auto-refresh |
+| `warningThreshold`  | `30`    | Yellow alert at this %       |
+| `criticalThreshold` | `10`    | Red alert at this %          |
+| `groupingEnabled`   | `true`  | Group models by quota pool   |
 
 ## How It Works
 
@@ -73,6 +73,29 @@ The extension finds the running Antigravity language server process, extracts th
 
 - Antigravity IDE must be running
 - VS Code 1.90.0 or higher
+
+## Troubleshooting
+
+### "Could not register service worker" Error
+
+If you see an error like "Could not register service worker: InvalidStateError" when opening the dashboard, this is a known VS Code issue, not a problem with this extension.
+
+**Quick Fixes:**
+
+1. **Restart VS Code completely**
+   - Close ALL VS Code windows
+   - On Linux/Mac: Run `killall code` in terminal (may need to repeat)
+   - On Windows: End all "Code.exe" processes in Task Manager
+   - Relaunch VS Code
+
+2. **Clear VS Code cache**
+   - Linux: Delete contents of `~/.config/Code/Cache`, `CachedData`, and `GPUCache`
+   - Windows: `%APPDATA%\Code\Cache`, `CachedData`, and `GPUCache`
+   - macOS: `~/Library/Application Support/Code/Cache`, `CachedData`, and `GPUCache`
+
+3. **Use QuickPick mode as fallback**
+   - Run `Ctrl+Shift+P` → "Antigravity Stats: Switch Display Mode"
+   - This switches to a keyboard-friendly list view that doesn't use webviews
 
 ## License
 

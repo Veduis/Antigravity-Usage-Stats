@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { logger } from '../services/logger';
-import { QuotaInfo, QuotaGroup, QuotaHelpers, QuotaStatus } from '../data';
+import { QuotaInfo, QuotaGroup, QuotaHelpers } from '../data';
 import { quotaGrouper } from '../data/quotaGrouper';
 import { pollingManager } from '../data/pollingManager';
 
@@ -28,47 +28,84 @@ export class DashboardPanel {
       return;
     }
 
-    const panel = vscode.window.createWebviewPanel(
-      'antigravityStats',
-      'Antigravity Stats',
-      column || vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [context.extensionUri],
+    try {
+      const panel = vscode.window.createWebviewPanel(
+        'antigravityStats',
+        'Antigravity Stats',
+        column || vscode.ViewColumn.One,
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          localResourceRoots: [context.extensionUri],
+        }
+      );
+
+      DashboardPanel.instance = new DashboardPanel();
+      DashboardPanel.instance.panel = panel;
+      DashboardPanel.instance.context = context;
+
+      // Set up panel event handlers
+      panel.onDidDispose(
+        () => DashboardPanel.instance = undefined,
+        null,
+        context.subscriptions
+      );
+
+      // Handle messages from webview
+      panel.webview.onDidReceiveMessage(
+        message => DashboardPanel.instance?.handleMessage(message),
+        null,
+        context.subscriptions
+      );
+
+      // Update content
+      DashboardPanel.instance.updateContent();
+
+      // Listen for quota updates
+      pollingManager.addListener(result => {
+        if (result.success && DashboardPanel.instance) {
+          DashboardPanel.instance.currentQuotas = result.quotas;
+          DashboardPanel.instance.updateContent();
+        }
+      });
+
+      logger.info('Dashboard panel created');
+    } catch (error) {
+      // Webview failed to load - provide fallback and guidance
+      logger.error(`Failed to create dashboard panel: ${error}`);
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check if it's the service worker error
+      if (errorMessage.includes('service worker') || errorMessage.includes('InvalidStateError')) {
+        vscode.window.showErrorMessage(
+          'Dashboard failed to load due to a VS Code webview issue. ' +
+          'Try: 1) Restart VS Code completely, or 2) Clear VS Code cache. ' +
+          'Using QuickPick mode as fallback.',
+          'Open QuickPick',
+          'How to Fix'
+        ).then(selection => {
+          if (selection === 'Open QuickPick') {
+            vscode.commands.executeCommand('antigravityStats.switchMode');
+            vscode.commands.executeCommand('antigravityStats.openDashboard');
+          } else if (selection === 'How to Fix') {
+            vscode.env.openExternal(vscode.Uri.parse(
+              'https://github.com/Veduis/Antigravity-Usage-Stats#troubleshooting'
+            ));
+          }
+        });
+      } else {
+        vscode.window.showErrorMessage(
+          `Failed to open dashboard: ${errorMessage}. Using QuickPick mode as fallback.`,
+          'Open QuickPick'
+        ).then(selection => {
+          if (selection === 'Open QuickPick') {
+            vscode.commands.executeCommand('antigravityStats.switchMode');
+            vscode.commands.executeCommand('antigravityStats.openDashboard');
+          }
+        });
       }
-    );
-
-    DashboardPanel.instance = new DashboardPanel();
-    DashboardPanel.instance.panel = panel;
-    DashboardPanel.instance.context = context;
-
-    // Set up panel event handlers
-    panel.onDidDispose(
-      () => DashboardPanel.instance = undefined,
-      null,
-      context.subscriptions
-    );
-
-    // Handle messages from webview
-    panel.webview.onDidReceiveMessage(
-      message => DashboardPanel.instance?.handleMessage(message),
-      null,
-      context.subscriptions
-    );
-
-    // Update content
-    DashboardPanel.instance.updateContent();
-
-    // Listen for quota updates
-    pollingManager.addListener(result => {
-      if (result.success && DashboardPanel.instance) {
-        DashboardPanel.instance.currentQuotas = result.quotas;
-        DashboardPanel.instance.updateContent();
-      }
-    });
-
-    logger.info('Dashboard panel created');
+    }
   }
 
   /**
