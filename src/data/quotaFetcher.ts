@@ -77,12 +77,22 @@ export class QuotaFetcher {
 
             try {
                 result = await this.fetchLocal();
-            } catch {
+            } catch (localError) {
                 if (this.config.remoteUrl) {
                     result = await this.fetchRemote();
                 } else {
-                    // Return mock data for development/testing
-                    result = this.getMockData();
+                    // No mock data - return empty result with clear error
+                    const errorMsg = localError instanceof Error 
+                        ? localError.message 
+                        : 'Antigravity language server not found. Please ensure Antigravity is installed and running.';
+                    logger.warn(`Local fetch failed: ${errorMsg}`);
+                    return {
+                        success: false,
+                        quotas: [],
+                        error: errorMsg,
+                        source: 'local',
+                        timestamp: new Date(),
+                    };
                 }
             }
 
@@ -216,103 +226,6 @@ export class QuotaFetcher {
         };
     }
 
-    /**
-     * Returns mock data for development/testing.
-     */
-    private getMockData(): FetchResult {
-        logger.debug('Using mock data');
-        const now = new Date();
-        const resetTime = new Date(now.getTime() + 5 * 60 * 60 * 1000); // 5 hours from now
-
-        const mockQuotas: QuotaInfo[] = [
-            // Claude Pool
-            QuotaHelpers.createQuotaInfo(
-                'claude-3-5-sonnet',
-                'Claude 3.5 Sonnet',
-                'claude-pool',
-                5,
-                50,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'claude-3-opus',
-                'Claude 3 Opus',
-                'claude-pool',
-                45,
-                50,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'claude-3-5-haiku',
-                'Claude 3.5 Haiku',
-                'claude-pool',
-                49,
-                50,
-                resetTime,
-                this.config.thresholds
-            ),
-
-            // Gemini Pro Pool
-            QuotaHelpers.createQuotaInfo(
-                'gemini-1-5-pro',
-                'Gemini 1.5 Pro',
-                'gemini-pro-pool',
-                45,
-                100,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'gemini-2-0-flash',
-                'Gemini 2.0 Flash',
-                'gemini-pro-pool',
-                85,
-                100,
-                resetTime,
-                this.config.thresholds
-            ),
-
-            // Gemini Flash Pool
-            QuotaHelpers.createQuotaInfo(
-                'gemini-1-5-flash',
-                'Gemini 1.5 Flash',
-                'gemini-flash-pool',
-                400,
-                500,
-                resetTime,
-                this.config.thresholds
-            ),
-
-            // GPT Pool (Media.ml)
-            QuotaHelpers.createQuotaInfo(
-                'gpt-4o',
-                'GPT-4o',
-                'gpt-pool',
-                60,
-                100,
-                resetTime,
-                this.config.thresholds
-            ),
-            QuotaHelpers.createQuotaInfo(
-                'gpt-4o-mini',
-                'GPT-4o mini',
-                'gpt-pool',
-                95,
-                100,
-                resetTime,
-                this.config.thresholds
-            ),
-        ];
-
-        return {
-            success: true,
-            quotas: mockQuotas,
-            source: 'local',
-            timestamp: new Date(),
-        };
-    }
 }
 
 // Export singleton

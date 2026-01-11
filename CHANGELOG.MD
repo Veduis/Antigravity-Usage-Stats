@@ -4,6 +4,29 @@ All notable changes to the Antigravity Usage Stats project will be documented in
 
 ---
 
+## [2026-01-11] - Version 0.3.0
+
+### 🌍 Cross-Platform Support
+
+- **Windows Support**: Added PowerShell-based process and port discovery
+- **macOS Support**: Added `ps aux` + `lsof` based process and port discovery
+- **Linux**: Maintained existing `pgrep` + `ss` implementation
+
+### Bug Fixes
+
+- **Fixed incorrect model display**: Removed mock data fallback that showed non-existent models (GPT-4o, Claude 3 Opus, etc.) when Antigravity wasn't connected
+- Extension now shows "No quota data available" instead of fake data
+
+### Technical Changes
+
+- Rewrote `antigravityClient.ts` with platform detection and platform-specific code paths
+- Process names now correctly match each platform:
+  - Windows: `language_server_windows_x64.exe`
+  - macOS: `language_server_macos_x64`
+  - Linux: `language_server_linux_x64`
+
+---
+
 ## [2026-01-11] - Version 0.2.1
 
 ### Models & Usage Stats
