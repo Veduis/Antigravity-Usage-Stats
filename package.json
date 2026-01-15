@@ -2,7 +2,7 @@
   "name": "antigravity-usage-stats",
   "displayName": "Antigravity Usage Stats",
   "description": "Monitor AI model usage quotas in VS Code with status bar indicators and quick access",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "Veduis",
   "license": "MIT",
   "icon": "icon.png",
