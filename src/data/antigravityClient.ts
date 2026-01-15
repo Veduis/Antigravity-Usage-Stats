@@ -240,26 +240,89 @@ export class AntigravityClient {
     }
 
     /**
-     * Windows: Find process using PowerShell.
+     * Checks if a command line belongs to an Antigravity process (vs Codeium).
+     * Both use the same language_server binary, so we need to distinguish them.
+     */
+    private isAntigravityProcess(commandLine: string): boolean {
+        const lowerCmd = commandLine.toLowerCase();
+
+        // Check for --app_data_dir antigravity parameter
+        if (/--app_data_dir\s+antigravity\b/i.test(commandLine)) {
+            logger.debug('Process identified as Antigravity (--app_data_dir match)');
+            return true;
+        }
+
+        // Check for antigravity in the path
+        if (lowerCmd.includes('\\antigravity\\') || lowerCmd.includes('/antigravity/')) {
+            logger.debug('Process identified as Antigravity (path match)');
+            return true;
+        }
+
+        logger.debug('Process is NOT Antigravity (possibly Codeium)');
+        return false;
+    }
+
+    /**
+     * Windows: Find process using PowerShell with WMIC fallback.
      */
     private async findProcessWindows(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+        // Try PowerShell first
+        const psResult = await this.findProcessWindowsPowerShell();
+        if (psResult) {
+            return psResult;
+        }
+
+        // Fallback to WMIC for older Windows systems
+        logger.debug('PowerShell failed, trying WMIC fallback...');
+        return this.findProcessWindowsWmic();
+    }
+
+    /**
+     * Windows: Find process using PowerShell.
+     */
+    private async findProcessWindowsPowerShell(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
         try {
-            // Use PowerShell to get process info with command line
-            const cmd = `powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${this.processName}*' -and $_.CommandLine -like '*--csrf_token*' } | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"`;
+            // Use proper PowerShell escaping with -Filter clause for better performance
+            const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='${this.processName}'\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json"`;
             
-            const { stdout } = await execAsync(cmd, { timeout: 10000 });
+            logger.debug(`Executing PowerShell command: ${cmd}`);
+            const { stdout, stderr } = await execAsync(cmd, { timeout: 15000 });
             
+            if (stderr) {
+                logger.debug(`PowerShell stderr: ${stderr}`);
+            }
+
             if (!stdout.trim()) {
+                logger.debug('PowerShell returned empty output');
                 return null;
             }
 
+            logger.debug(`PowerShell stdout (${stdout.length} chars): ${stdout.substring(0, 500)}`);
+
             // Parse JSON result (could be array or single object)
-            let processes = JSON.parse(stdout);
+            let processes;
+            try {
+                processes = JSON.parse(stdout.trim());
+            } catch (parseError) {
+                logger.debug('Failed to parse PowerShell JSON output', parseError instanceof Error ? parseError : undefined);
+                return null;
+            }
+
             if (!Array.isArray(processes)) {
                 processes = [processes];
             }
 
-            for (const proc of processes) {
+            logger.debug(`Found ${processes.length} language_server process(es)`);
+
+            // Filter to only Antigravity processes (not Codeium)
+            const antigravityProcesses = processes.filter(
+                (proc: { CommandLine?: string; ProcessId?: number }) =>
+                    proc.CommandLine && this.isAntigravityProcess(proc.CommandLine)
+            );
+
+            logger.info(`Found ${antigravityProcesses.length} Antigravity process(es) out of ${processes.length} total`);
+
+            for (const proc of antigravityProcesses) {
                 if (proc.CommandLine && proc.ProcessId) {
                     const result = this.parseCommandLine(proc.ProcessId, proc.CommandLine);
                     if (result) {
@@ -270,7 +333,54 @@ export class AntigravityClient {
 
             return null;
         } catch (error) {
-            logger.debug('Windows process discovery failed', error instanceof Error ? error : undefined);
+            logger.debug('Windows PowerShell process discovery failed', error instanceof Error ? error : undefined);
+            return null;
+        }
+    }
+
+    /**
+     * Windows: Find process using WMIC (fallback for older systems).
+     */
+    private async findProcessWindowsWmic(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+        try {
+            const cmd = `wmic process where "name='${this.processName}'" get ProcessId,CommandLine /format:list`;
+            
+            logger.debug(`Executing WMIC command: ${cmd}`);
+            const { stdout } = await execAsync(cmd, { timeout: 10000 });
+            
+            if (!stdout.trim()) {
+                return null;
+            }
+
+            // Parse WMIC output (format: key=value pairs separated by blank lines)
+            const blocks = stdout.split(/\n\s*\n/).filter(block => block.trim().length > 0);
+            
+            for (const block of blocks) {
+                const pidMatch = block.match(/ProcessId=(\d+)/);
+                const cmdLineMatch = block.match(/CommandLine=(.+)/);
+
+                if (!pidMatch || !cmdLineMatch) {
+                    continue;
+                }
+
+                const commandLine = cmdLineMatch[1].trim();
+                
+                // Check if this is an Antigravity process
+                if (!this.isAntigravityProcess(commandLine)) {
+                    continue;
+                }
+
+                const pid = parseInt(pidMatch[1], 10);
+                const result = this.parseCommandLine(pid, commandLine);
+                if (result) {
+                    logger.info(`WMIC found Antigravity process PID: ${pid}`);
+                    return result;
+                }
+            }
+
+            return null;
+        } catch (error) {
+            logger.debug('Windows WMIC process discovery failed', error instanceof Error ? error : undefined);
             return null;
         }
     }
@@ -341,9 +451,11 @@ export class AntigravityClient {
      */
     private parseCommandLine(pid: number, cmdLine: string): Omit<ProcessInfo, 'connectPort'> | null {
         const portMatch = cmdLine.match(/--extension_server_port[=\s]+(\d+)/);
-        const tokenMatch = cmdLine.match(/--csrf_token[=\s]+([a-zA-Z0-9-]+)/);
+        // Use case-insensitive hex pattern for CSRF token (matches UUID format)
+        const tokenMatch = cmdLine.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
 
         if (tokenMatch && tokenMatch[1]) {
+            logger.debug(`Parsed process: PID=${pid}, port=${portMatch ? portMatch[1] : 'N/A'}, csrf_token=${tokenMatch[1].substring(0, 8)}...`);
             return {
                 pid,
                 extensionPort: portMatch ? parseInt(portMatch[1], 10) : 0,
@@ -351,6 +463,7 @@ export class AntigravityClient {
             };
         }
 
+        logger.debug(`Failed to parse CSRF token from command line for PID ${pid}`);
         return null;
     }
 
@@ -373,29 +486,87 @@ export class AntigravityClient {
     }
 
     /**
-     * Windows: Get listening ports using PowerShell.
+     * Windows: Get listening ports using PowerShell with netstat fallback.
      */
     private async getListeningPortsWindows(pid: number): Promise<number[]> {
+        // Try PowerShell first
+        const psPorts = await this.getListeningPortsWindowsPowerShell(pid);
+        if (psPorts.length > 0) {
+            return psPorts;
+        }
+
+        // Fallback to netstat
+        logger.debug('PowerShell port discovery returned no results, trying netstat...');
+        return this.getListeningPortsWindowsNetstat(pid);
+    }
+
+    /**
+     * Windows: Get listening ports using PowerShell.
+     */
+    private async getListeningPortsWindowsPowerShell(pid: number): Promise<number[]> {
         try {
-            const cmd = `powershell.exe -NoProfile -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort | ConvertTo-Json -Compress"`;
+            // Use simpler command that works across more Windows versions
+            const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen | Select-Object -ExpandProperty LocalPort | ConvertTo-Json"`;
+            
+            logger.debug(`Executing PowerShell port command: ${cmd}`);
             const { stdout } = await execAsync(cmd, { timeout: 10000 });
 
             if (!stdout.trim()) {
                 return [];
             }
 
-            let connections = JSON.parse(stdout);
-            if (!Array.isArray(connections)) {
-                connections = [connections];
+            try {
+                const data = JSON.parse(stdout.trim());
+                const ports: number[] = [];
+
+                if (Array.isArray(data)) {
+                    for (const port of data) {
+                        if (typeof port === 'number' && !ports.includes(port)) {
+                            ports.push(port);
+                        }
+                    }
+                } else if (typeof data === 'number') {
+                    ports.push(data);
+                }
+
+                logger.debug(`PowerShell found ports: [${ports.join(', ')}]`);
+                return ports.sort((a, b) => a - b);
+            } catch {
+                return [];
+            }
+        } catch (error) {
+            logger.debug('Windows PowerShell port discovery failed', error instanceof Error ? error : undefined);
+            return [];
+        }
+    }
+
+    /**
+     * Windows: Get listening ports using netstat (fallback).
+     */
+    private async getListeningPortsWindowsNetstat(pid: number): Promise<number[]> {
+        try {
+            const cmd = `netstat -ano | findstr "${pid}"`;
+            
+            logger.debug(`Executing netstat command: ${cmd}`);
+            const { stdout } = await execAsync(cmd, { timeout: 10000 });
+
+            const ports: number[] = [];
+            // Match listening ports for the given PID
+            // Format: TCP    127.0.0.1:42424        0.0.0.0:0              LISTENING       12345
+            const portRegex = new RegExp(`(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::\\]):(\\d+)\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*).*?\\s+${pid}$`, 'gim');
+
+            let match;
+            while ((match = portRegex.exec(stdout)) !== null) {
+                const port = parseInt(match[1], 10);
+                if (!ports.includes(port)) {
+                    ports.push(port);
+                }
             }
 
-            const ports: number[] = connections
-                .filter((c: { LocalPort?: number }) => c.LocalPort)
-                .map((c: { LocalPort: number }) => c.LocalPort);
-
-            return [...new Set<number>(ports)].sort((a, b) => a - b);
+            logger.debug(`Netstat found ports: [${ports.join(', ')}]`);
+            return ports.sort((a, b) => a - b);
         } catch (error) {
-            logger.debug('Windows port discovery failed', error instanceof Error ? error : undefined);
+            logger.debug('Windows netstat port discovery failed', error instanceof Error ? error : undefined);
             return [];
         }
     }
@@ -432,15 +603,17 @@ export class AntigravityClient {
     }
 
     /**
-     * Linux: Get listening ports using ss.
+     * Linux: Get listening ports using ss with lsof fallback.
      */
     private async getListeningPortsLinux(pid: number): Promise<number[]> {
+        // Try ss first
         try {
             const cmd = `ss -tlnp 2>/dev/null | grep "pid=${pid},"`;
             const { stdout } = await execAsync(cmd, { timeout: 5000 });
 
             const ports: number[] = [];
-            const regex = /LISTEN\s+\d+\s+\d+\s+(?:\*|[\d.]+|\[[\da-f:]*\]):(\d+).*?pid=(\d+)/gi;
+            // Match ports from ss output
+            const regex = /LISTEN\s+\d+\s+\d+\s+(?:\*|[\d.]+|\[[\da-f:]*\]):(\d+).*?users:.*?,pid=(\d+),/gi;
 
             let match;
             while ((match = regex.exec(stdout)) !== null) {
@@ -451,9 +624,34 @@ export class AntigravityClient {
                 }
             }
 
+            if (ports.length > 0) {
+                logger.debug(`ss found ports: [${ports.join(', ')}]`);
+                return ports.sort((a, b) => a - b);
+            }
+        } catch (error) {
+            logger.debug('Linux ss port discovery failed, trying lsof...', error instanceof Error ? error : undefined);
+        }
+
+        // Fallback to lsof
+        try {
+            const cmd = `lsof -nP -a -iTCP -sTCP:LISTEN -p ${pid} 2>/dev/null`;
+            const { stdout } = await execAsync(cmd, { timeout: 5000 });
+
+            const ports: number[] = [];
+            const lsofRegex = new RegExp(`^\\S+\\s+${pid}\\s+.*?(?:TCP|UDP)\\s+(?:\\*|[\\d.]+|\\[[\\da-f:]+\\]):(\\d+)\\s+\\(LISTEN\\)`, 'gim');
+
+            let match;
+            while ((match = lsofRegex.exec(stdout)) !== null) {
+                const port = parseInt(match[1], 10);
+                if (!ports.includes(port)) {
+                    ports.push(port);
+                }
+            }
+
+            logger.debug(`lsof found ports: [${ports.join(', ')}]`);
             return ports.sort((a, b) => a - b);
         } catch (error) {
-            logger.debug('Linux port discovery failed', error instanceof Error ? error : undefined);
+            logger.debug('Linux lsof port discovery failed', error instanceof Error ? error : undefined);
             return [];
         }
     }
