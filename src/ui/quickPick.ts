@@ -38,6 +38,8 @@ const POOL_ICONS: Record<string, string> = {
     'claude-pool': '🤖',
     'gemini-pro-pool': '✨',
     'gemini-flash-pool': '⚡',
+    'gemini-pool': '🪐',
+    'gpt-pool': '🧠',
     'default-pool': '📦',
 };
 

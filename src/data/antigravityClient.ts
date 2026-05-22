@@ -8,6 +8,7 @@
  */
 
 import * as https from 'https';
+import * as http from 'http';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../services/logger';
@@ -28,6 +29,7 @@ interface ProcessInfo {
     extensionPort: number;
     csrfToken: string;
     connectPort: number;
+    protocol: 'http' | 'https';
 }
 
 /**
@@ -148,10 +150,11 @@ export class AntigravityClient {
 
             this.processInfo = {
                 ...basicInfo,
-                connectPort: workingPort,
+                connectPort: workingPort.port,
+                protocol: workingPort.protocol,
             };
 
-            logger.info(`Connected to Antigravity on port ${workingPort}`);
+            logger.info(`Connected to Antigravity on port ${workingPort.port} (${workingPort.protocol})`);
             return true;
         } catch (error) {
             logger.error('Failed to connect to Antigravity', error instanceof Error ? error : undefined);
@@ -228,7 +231,7 @@ export class AntigravityClient {
     /**
      * Finds the Antigravity language server process (platform-aware).
      */
-    private async findProcess(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcess(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         switch (this.platform) {
             case 'win32':
                 return this.findProcessWindows();
@@ -265,7 +268,7 @@ export class AntigravityClient {
     /**
      * Windows: Find process using PowerShell with WMIC fallback.
      */
-    private async findProcessWindows(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcessWindows(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         // Try PowerShell first
         const psResult = await this.findProcessWindowsPowerShell();
         if (psResult) {
@@ -280,7 +283,7 @@ export class AntigravityClient {
     /**
      * Windows: Find process using PowerShell.
      */
-    private async findProcessWindowsPowerShell(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcessWindowsPowerShell(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             // Use proper PowerShell escaping with -Filter clause for better performance
             const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='${this.processName}'\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json"`;
@@ -341,7 +344,7 @@ export class AntigravityClient {
     /**
      * Windows: Find process using WMIC (fallback for older systems).
      */
-    private async findProcessWindowsWmic(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcessWindowsWmic(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             const cmd = `wmic process where "name='${this.processName}'" get ProcessId,CommandLine /format:list`;
             
@@ -388,7 +391,7 @@ export class AntigravityClient {
     /**
      * macOS: Find process using ps aux.
      */
-    private async findProcessMacOS(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcessMacOS(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             // Use ps aux to get all processes with full command line
             const cmd = `ps aux | grep -v grep | grep '${this.processName}'`;
@@ -421,7 +424,7 @@ export class AntigravityClient {
     /**
      * Linux: Find process using pgrep.
      */
-    private async findProcessLinux(): Promise<Omit<ProcessInfo, 'connectPort'> | null> {
+    private async findProcessLinux(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             const cmd = `pgrep -af ${this.processName}`;
             const { stdout } = await execAsync(cmd, { timeout: 5000 });
@@ -449,7 +452,7 @@ export class AntigravityClient {
     /**
      * Parses command line to extract port and CSRF token.
      */
-    private parseCommandLine(pid: number, cmdLine: string): Omit<ProcessInfo, 'connectPort'> | null {
+    private parseCommandLine(pid: number, cmdLine: string): Omit<ProcessInfo, 'connectPort' | 'protocol'> | null {
         const portMatch = cmdLine.match(/--extension_server_port[=\s]+(\d+)/);
         // Use case-insensitive hex pattern for CSRF token (matches UUID format)
         const tokenMatch = cmdLine.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
@@ -663,24 +666,41 @@ export class AntigravityClient {
     /**
      * Tests ports to find one that responds.
      */
-    private async findWorkingPort(ports: number[], csrfToken: string): Promise<number | null> {
+    private async findWorkingPort(ports: number[], csrfToken: string): Promise<{ port: number, protocol: 'http' | 'https' } | null> {
         for (const port of ports) {
-            const isWorking = await this.testPort(port, csrfToken);
-            if (isWorking) {
-                return port;
+            const protocol = await this.testPort(port, csrfToken);
+            if (protocol) {
+                return { port, protocol };
             }
         }
         return null;
     }
 
     /**
-     * Tests if a port responds to Antigravity API requests.
+     * Tests if a port responds to Antigravity API requests via HTTPS or HTTP.
      */
-    private testPort(port: number, csrfToken: string): Promise<boolean> {
+    private async testPort(port: number, csrfToken: string): Promise<'http' | 'https' | null> {
+        // Try HTTPS first
+        const isHttps = await this.testPortWithProtocol('https', port, csrfToken);
+        if (isHttps) {
+            return 'https';
+        }
+        // Fallback to HTTP
+        const isHttp = await this.testPortWithProtocol('http', port, csrfToken);
+        if (isHttp) {
+            return 'http';
+        }
+        return null;
+    }
+
+    /**
+     * Helper to test a single port with a specific protocol.
+     */
+    private testPortWithProtocol(protocol: 'http' | 'https', port: number, csrfToken: string): Promise<boolean> {
         return new Promise(resolve => {
             const data = JSON.stringify({ wrapper_data: {} });
 
-            const options: https.RequestOptions = {
+            const options = {
                 hostname: '127.0.0.1',
                 port,
                 path: '/exa.language_server_pb.LanguageServerService/GetUnleashData',
@@ -695,7 +715,8 @@ export class AntigravityClient {
                 timeout: 3000,
             };
 
-            const req = https.request(options, res => {
+            const reqLib = protocol === 'https' ? https : http;
+            const req = reqLib.request(options, res => {
                 let body = '';
                 res.on('data', chunk => (body += chunk));
                 res.on('end', () => {
@@ -735,7 +756,7 @@ export class AntigravityClient {
 
             const data = JSON.stringify(body);
 
-            const options: https.RequestOptions = {
+            const options = {
                 hostname: '127.0.0.1',
                 port: this.processInfo.connectPort,
                 path,
@@ -750,7 +771,8 @@ export class AntigravityClient {
                 timeout: 5000,
             };
 
-            const req = https.request(options, res => {
+            const reqLib = this.processInfo.protocol === 'https' ? https : http;
+            const req = reqLib.request(options, res => {
                 let body = '';
                 res.on('data', chunk => (body += chunk));
                 res.on('end', () => {
@@ -811,13 +833,10 @@ export class AntigravityClient {
             });
     }
 
-    /**
-     * Infers pool ID from model label.
-     */
     private inferPoolId(label: string): string {
         const lowerLabel = label.toLowerCase();
 
-        // Claude models share a pool (including GPT on some configs)
+        // Claude models share a pool
         if (lowerLabel.includes('claude')) {
             return 'claude-pool';
         }
@@ -832,9 +851,14 @@ export class AntigravityClient {
             return 'gemini-flash-pool';
         }
 
-        // GPT models - may share with Claude
+        // Other Gemini models
+        if (lowerLabel.includes('gemini')) {
+            return 'gemini-pool';
+        }
+
+        // GPT models
         if (lowerLabel.includes('gpt')) {
-            return 'claude-pool'; // Based on user feedback
+            return 'gpt-pool';
         }
 
         return 'default-pool';
