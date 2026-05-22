@@ -5,6 +5,7 @@
 !package.json
 !LICENSE
 !README.md
+!CHANGELOG.md
 !icon.png
 !dist/**
 !dist/extension.js
@@ -27,7 +28,6 @@ out/**
 .prettierrc
 tsconfig.json
 esbuild.config.js
-CHANGELOG.md
 TODO.md
 tek-spec.md
 CLAUDE.md
