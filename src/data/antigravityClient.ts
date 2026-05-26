@@ -80,7 +80,8 @@ export class AntigravityClient {
         // Set platform-specific process name
         switch (this.platform) {
             case 'win32':
-                this.processName = `language_server_windows${arch}.exe`;
+                // Windows always uses x64 binary (ARM64 Windows runs via emulation)
+                this.processName = `language_server_windows_x64.exe`;
                 break;
             case 'darwin':
                 this.processName = `language_server_macos${arch}`;
@@ -122,44 +123,55 @@ export class AntigravityClient {
     public async connect(): Promise<boolean> {
         logger.info(`Attempting to connect to Antigravity language server on ${this.platform}...`);
 
-        try {
-            // Step 1: Find the language server process
-            const basicInfo = await this.findProcess();
-            if (!basicInfo) {
-                logger.warn('Antigravity language server process not found');
-                return false;
+        // Retry up to 2 times with a short delay (handles race conditions on startup)
+        const maxRetries = 2;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            if (attempt > 0) {
+                logger.debug(`Connection retry ${attempt + 1}/${maxRetries}, waiting 500ms...`);
+                await new Promise(r => setTimeout(r, 500));
             }
 
-            logger.debug(`Found process PID: ${basicInfo.pid}, CSRF token: ${basicInfo.csrfToken.substring(0, 8)}...`);
+            try {
+                // Step 1: Find the language server process
+                const basicInfo = await this.findProcess();
+                if (!basicInfo) {
+                    logger.warn(`Antigravity language server process not found (attempt ${attempt + 1})`);
+                    continue;
+                }
 
-            // Step 2: Get listening ports for the process
-            const ports = await this.getListeningPorts(basicInfo.pid);
-            if (ports.length === 0) {
-                logger.warn('No listening ports found for Antigravity process');
-                return false;
+                logger.debug(`Found process PID: ${basicInfo.pid}, CSRF token: ${basicInfo.csrfToken.substring(0, 8)}...`);
+
+                // Step 2: Get listening ports for the process
+                const ports = await this.getListeningPorts(basicInfo.pid);
+                if (ports.length === 0) {
+                    logger.warn('No listening ports found for Antigravity process');
+                    continue;
+                }
+
+                logger.debug(`Found ${ports.length} listening ports: ${ports.join(', ')}`);
+
+                // Step 3: Find the working port by testing each one
+                const workingPort = await this.findWorkingPort(ports, basicInfo.csrfToken);
+                if (!workingPort) {
+                    logger.warn('No working port found');
+                    continue;
+                }
+
+                this.processInfo = {
+                    ...basicInfo,
+                    connectPort: workingPort.port,
+                    protocol: workingPort.protocol,
+                };
+
+                logger.info(`Connected to Antigravity on port ${workingPort.port} (${workingPort.protocol})`);
+                return true;
+            } catch (error) {
+                logger.error(`Connection attempt ${attempt + 1} failed`, error instanceof Error ? error : undefined);
             }
-
-            logger.debug(`Found ${ports.length} listening ports: ${ports.join(', ')}`);
-
-            // Step 3: Find the working port by testing each one
-            const workingPort = await this.findWorkingPort(ports, basicInfo.csrfToken);
-            if (!workingPort) {
-                logger.warn('No working port found');
-                return false;
-            }
-
-            this.processInfo = {
-                ...basicInfo,
-                connectPort: workingPort.port,
-                protocol: workingPort.protocol,
-            };
-
-            logger.info(`Connected to Antigravity on port ${workingPort.port} (${workingPort.protocol})`);
-            return true;
-        } catch (error) {
-            logger.error('Failed to connect to Antigravity', error instanceof Error ? error : undefined);
-            return false;
         }
+
+        logger.error(`Failed to connect after ${maxRetries} attempts`);
+        return false;
     }
 
     /**
@@ -286,7 +298,7 @@ export class AntigravityClient {
     private async findProcessWindowsPowerShell(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             // Use proper PowerShell escaping with -Filter clause for better performance
-            const cmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='${this.processName}'\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json"`;
+            const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \\"name='${this.processName}'\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json"`;
             
             logger.debug(`Executing PowerShell command: ${cmd}`);
             const { stdout, stderr } = await execAsync(cmd, { timeout: 15000 });
@@ -509,7 +521,7 @@ export class AntigravityClient {
     private async getListeningPortsWindowsPowerShell(pid: number): Promise<number[]> {
         try {
             // Use simpler command that works across more Windows versions
-            const cmd = `powershell -NoProfile -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen | Select-Object -ExpandProperty LocalPort | ConvertTo-Json"`;
+            const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen | Select-Object -ExpandProperty LocalPort | ConvertTo-Json"`;
             
             logger.debug(`Executing PowerShell port command: ${cmd}`);
             const { stdout } = await execAsync(cmd, { timeout: 10000 });
@@ -556,7 +568,8 @@ export class AntigravityClient {
             const ports: number[] = [];
             // Match listening ports for the given PID
             // Format: TCP    127.0.0.1:42424        0.0.0.0:0              LISTENING       12345
-            const portRegex = new RegExp(`(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::\\]):(\\d+)\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*).*?\\s+${pid}$`, 'gim');
+            // Match IPv4 (127.0.0.1, 0.0.0.0) and IPv6 ([::], [::1]) localhost addresses
+            const portRegex = new RegExp(`(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1?\\]):(\\d+)\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*).*?\\s+${pid}$`, 'gim');
 
             let match;
             while ((match = portRegex.exec(stdout)) !== null) {
