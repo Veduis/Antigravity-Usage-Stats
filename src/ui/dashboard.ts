@@ -61,11 +61,28 @@ export class DashboardPanel {
       // Update content
       DashboardPanel.instance.updateContent();
 
-      // Listen for quota updates
+      // Listen for quota updates — send incremental data via postMessage instead of full HTML regen
       pollingManager.addListener(result => {
         if (result.success && DashboardPanel.instance) {
           DashboardPanel.instance.currentQuotas = result.quotas;
-          DashboardPanel.instance.updateContent();
+          // Prefer postMessage for live updates (avoids full page flicker)
+          if (DashboardPanel.instance.panel?.webview) {
+            const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+            const groupingEnabled = config.get<boolean>('groupingEnabled', true);
+            const thresholds = {
+              warning: config.get<number>('warningThreshold', 30),
+              critical: config.get<number>('criticalThreshold', 10),
+            };
+            const groups = groupingEnabled
+              ? quotaGrouper.groupByPool(result.quotas, thresholds)
+              : [];
+            try {
+              DashboardPanel.instance.panel.webview.postMessage({ type: 'update', groups });
+            } catch {
+              // postMessage not available (first load) — fall back to full update
+              DashboardPanel.instance.updateContent();
+            }
+          }
         }
       });
 
@@ -258,7 +275,7 @@ export class DashboardPanel {
         </div>
         <div class="model-details">
           <span>${model.remaining} / ${model.capacity}</span>
-          ${model.resetInSeconds ? `<span>⏱️ ${QuotaHelpers.formatResetCountdown(model.resetInSeconds)}</span>` : ''}
+          <span>⏱ ${model.resetFormatted}</span>
         </div>
       </div>
     `;

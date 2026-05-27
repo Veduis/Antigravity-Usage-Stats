@@ -1,7 +1,7 @@
 /**
  * Antigravity Client - Connects to the local Antigravity language server
  * to fetch real quota data.
- * 
+ *
  * Supports Windows, macOS, and Linux platforms.
  * Based on reverse-engineering of the ag-quota extension by Henrik Mertens.
  * https://github.com/Henrik-3/AntigravityQuota
@@ -12,18 +12,16 @@ import * as http from 'http';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../services/logger';
-import { QuotaInfo, FetchResult, QuotaHelpers, ThresholdConfig } from './models';
+import { QuotaInfo, FetchResult, QuotaHelpers, ThresholdConfig, PromptCreditsInfo } from './models';
 
 const execAsync = promisify(exec);
 
-/**
- * Supported platforms.
- */
+/** 10MB buffer — prevents overflow when many VS Code instances are running */
+const EXEC_OPTS = { timeout: 15000, maxBuffer: 10 * 1024 * 1024 };
+
+/** Supported platforms. */
 type Platform = 'win32' | 'darwin' | 'linux';
 
-/**
- * Process info from Antigravity language server.
- */
 interface ProcessInfo {
     pid: number;
     extensionPort: number;
@@ -32,9 +30,6 @@ interface ProcessInfo {
     protocol: 'http' | 'https';
 }
 
-/**
- * Raw model from Antigravity API response.
- */
 interface AntigravityModel {
     label?: string;
     modelOrAlias?: { model?: string };
@@ -44,9 +39,6 @@ interface AntigravityModel {
     };
 }
 
-/**
- * Antigravity API response structure.
- */
 interface AntigravityUserStatus {
     userStatus?: {
         cascadeModelConfigData?: {
@@ -61,26 +53,25 @@ interface AntigravityUserStatus {
     };
 }
 
-/**
- * Client for connecting to the local Antigravity language server.
- * Supports Windows, macOS, and Linux.
- */
+/** Connection status for UI feedback. */
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
 export class AntigravityClient {
     private static instance: AntigravityClient;
     private processInfo: ProcessInfo | null = null;
     private thresholds: ThresholdConfig = { warning: 30, critical: 10 };
     private processName: string;
     private platform: Platform;
+    private _status: ConnectionStatus = 'disconnected';
+    private statusListeners: Array<(s: ConnectionStatus) => void> = [];
 
     private constructor() {
-        // Detect platform and architecture
         this.platform = process.platform as Platform;
         const arch = process.arch === 'arm64' ? '_arm' : '_x64';
-        
-        // Set platform-specific process name
+
         switch (this.platform) {
             case 'win32':
-                // Windows always uses x64 binary (ARM64 Windows runs via emulation)
+                // Windows always ships x64 binary; ARM64 runs via emulation
                 this.processName = `language_server_windows_x64.exe`;
                 break;
             case 'darwin':
@@ -89,13 +80,10 @@ export class AntigravityClient {
             default:
                 this.processName = `language_server_linux${arch}`;
         }
-        
+
         logger.info(`AntigravityClient initialized for ${this.platform}, process: ${this.processName}`);
     }
 
-    /**
-     * Gets the singleton instance.
-     */
     public static getInstance(): AntigravityClient {
         if (!AntigravityClient.instance) {
             AntigravityClient.instance = new AntigravityClient();
@@ -103,28 +91,39 @@ export class AntigravityClient {
         return AntigravityClient.instance;
     }
 
-    /**
-     * Sets threshold configuration.
-     */
     public setThresholds(thresholds: ThresholdConfig): void {
         this.thresholds = thresholds;
     }
 
-    /**
-     * Checks if connected to Antigravity.
-     */
     public isConnected(): boolean {
         return this.processInfo !== null;
     }
 
-    /**
-     * Discovers and connects to the Antigravity language server.
-     */
-    public async connect(): Promise<boolean> {
-        logger.info(`Attempting to connect to Antigravity language server on ${this.platform}...`);
+    public get status(): ConnectionStatus {
+        return this._status;
+    }
 
-        // Retry up to 2 times with a short delay (handles race conditions on startup)
-        const maxRetries = 2;
+    public onStatusChange(listener: (s: ConnectionStatus) => void): () => void {
+        this.statusListeners.push(listener);
+        return () => {
+            this.statusListeners = this.statusListeners.filter(l => l !== listener);
+        };
+    }
+
+    private setStatus(s: ConnectionStatus): void {
+        if (this._status === s) { return; }
+        this._status = s;
+        for (const l of this.statusListeners) {
+            try { l(s); } catch { /* swallow */ }
+        }
+    }
+
+    /** Discovers and connects to the Antigravity language server. */
+    public async connect(): Promise<boolean> {
+        logger.info(`Attempting to connect on ${this.platform}...`);
+        this.setStatus('connecting');
+
+        const maxRetries = 3;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             if (attempt > 0) {
                 logger.debug(`Connection retry ${attempt + 1}/${maxRetries}, waiting 500ms...`);
@@ -132,16 +131,14 @@ export class AntigravityClient {
             }
 
             try {
-                // Step 1: Find the language server process
                 const basicInfo = await this.findProcess();
                 if (!basicInfo) {
                     logger.warn(`Antigravity language server process not found (attempt ${attempt + 1})`);
                     continue;
                 }
 
-                logger.debug(`Found process PID: ${basicInfo.pid}, CSRF token: ${basicInfo.csrfToken.substring(0, 8)}...`);
+                logger.debug(`Found process PID: ${basicInfo.pid}, CSRF: ${basicInfo.csrfToken.substring(0, 8)}...`);
 
-                // Step 2: Get listening ports for the process
                 const ports = await this.getListeningPorts(basicInfo.pid);
                 if (ports.length === 0) {
                     logger.warn('No listening ports found for Antigravity process');
@@ -150,7 +147,6 @@ export class AntigravityClient {
 
                 logger.debug(`Found ${ports.length} listening ports: ${ports.join(', ')}`);
 
-                // Step 3: Find the working port by testing each one
                 const workingPort = await this.findWorkingPort(ports, basicInfo.csrfToken);
                 if (!workingPort) {
                     logger.warn('No working port found');
@@ -164,6 +160,7 @@ export class AntigravityClient {
                 };
 
                 logger.info(`Connected to Antigravity on port ${workingPort.port} (${workingPort.protocol})`);
+                this.setStatus('connected');
                 return true;
             } catch (error) {
                 logger.error(`Connection attempt ${attempt + 1} failed`, error instanceof Error ? error : undefined);
@@ -171,20 +168,19 @@ export class AntigravityClient {
         }
 
         logger.error(`Failed to connect after ${maxRetries} attempts`);
+        this.setStatus('disconnected');
         return false;
     }
 
-    /**
-     * Fetches quota data from Antigravity.
-     */
+    /** Fetches quota data from Antigravity. */
     public async fetchQuota(): Promise<FetchResult> {
         if (!this.processInfo) {
-            // Try to connect first
             const connected = await this.connect();
             if (!connected) {
                 return {
                     success: false,
                     quotas: [],
+                    promptCredits: undefined,
                     error: 'Not connected to Antigravity',
                     source: 'local',
                     timestamp: new Date(),
@@ -204,23 +200,26 @@ export class AntigravityClient {
                 }
             );
 
-            const quotas = this.parseResponse(response);
+            const quotas = this.parseQuotas(response);
+            const promptCredits = this.parsePromptCredits(response);
 
+            this.setStatus('connected');
             return {
                 success: true,
                 quotas,
+                promptCredits,
                 source: 'local',
                 timestamp: new Date(),
             };
         } catch (error) {
             logger.error('Failed to fetch quota', error instanceof Error ? error : undefined);
-
-            // Connection may be stale, clear it
             this.processInfo = null;
+            this.setStatus('error');
 
             return {
                 success: false,
                 quotas: [],
+                promptCredits: undefined,
                 error: error instanceof Error ? error.message : 'Fetch failed',
                 source: 'local',
                 timestamp: new Date(),
@@ -228,11 +227,9 @@ export class AntigravityClient {
         }
     }
 
-    /**
-     * Disconnects from Antigravity.
-     */
     public disconnect(): void {
         this.processInfo = null;
+        this.setStatus('disconnected');
         logger.info('Disconnected from Antigravity');
     }
 
@@ -240,112 +237,75 @@ export class AntigravityClient {
     // Platform-Specific Process Discovery
     // =========================================================================
 
-    /**
-     * Finds the Antigravity language server process (platform-aware).
-     */
     private async findProcess(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         switch (this.platform) {
-            case 'win32':
-                return this.findProcessWindows();
-            case 'darwin':
-                return this.findProcessMacOS();
-            default:
-                return this.findProcessLinux();
+            case 'win32':  return this.findProcessWindows();
+            case 'darwin': return this.findProcessMacOS();
+            default:       return this.findProcessLinux();
         }
     }
 
     /**
      * Checks if a command line belongs to an Antigravity process (vs Codeium).
-     * Both use the same language_server binary, so we need to distinguish them.
+     * Both share the same language_server binary name.
      */
     private isAntigravityProcess(commandLine: string): boolean {
         const lowerCmd = commandLine.toLowerCase();
 
-        // Check for --app_data_dir antigravity parameter
         if (/--app_data_dir\s+antigravity\b/i.test(commandLine)) {
             logger.debug('Process identified as Antigravity (--app_data_dir match)');
             return true;
         }
-
-        // Check for antigravity in the path
         if (lowerCmd.includes('\\antigravity\\') || lowerCmd.includes('/antigravity/')) {
             logger.debug('Process identified as Antigravity (path match)');
             return true;
         }
 
-        logger.debug('Process is NOT Antigravity (possibly Codeium)');
+        logger.debug('Process is NOT Antigravity (possibly Codeium or other)');
         return false;
     }
 
-    /**
-     * Windows: Find process using PowerShell with WMIC fallback.
-     */
+    /** Windows: PowerShell → tasklist fallback (WMIC removed in Win11 23H2+). */
     private async findProcessWindows(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
-        // Try PowerShell first
         const psResult = await this.findProcessWindowsPowerShell();
-        if (psResult) {
-            return psResult;
-        }
+        if (psResult) { return psResult; }
 
-        // Fallback to WMIC for older Windows systems
-        logger.debug('PowerShell failed, trying WMIC fallback...');
-        return this.findProcessWindowsWmic();
+        logger.debug('PowerShell failed, trying tasklist fallback...');
+        return this.findProcessWindowsTasklist();
     }
 
-    /**
-     * Windows: Find process using PowerShell.
-     */
     private async findProcessWindowsPowerShell(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
-            // Use proper PowerShell escaping with -Filter clause for better performance
             const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \\"name='${this.processName}'\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json"`;
-            
-            logger.debug(`Executing PowerShell command: ${cmd}`);
-            const { stdout, stderr } = await execAsync(cmd, { timeout: 15000 });
-            
-            if (stderr) {
-                logger.debug(`PowerShell stderr: ${stderr}`);
-            }
+            logger.debug(`PowerShell process cmd: ${cmd}`);
+            const { stdout, stderr } = await execAsync(cmd, EXEC_OPTS);
 
-            if (!stdout.trim()) {
-                logger.debug('PowerShell returned empty output');
-                return null;
-            }
+            if (stderr) { logger.debug(`PowerShell stderr: ${stderr}`); }
+            if (!stdout.trim()) { logger.debug('PowerShell returned empty output'); return null; }
 
-            logger.debug(`PowerShell stdout (${stdout.length} chars): ${stdout.substring(0, 500)}`);
-
-            // Parse JSON result (could be array or single object)
             let processes;
             try {
                 processes = JSON.parse(stdout.trim());
-            } catch (parseError) {
-                logger.debug('Failed to parse PowerShell JSON output', parseError instanceof Error ? parseError : undefined);
+            } catch {
+                logger.debug('Failed to parse PowerShell JSON output');
                 return null;
             }
 
-            if (!Array.isArray(processes)) {
-                processes = [processes];
-            }
-
+            if (!Array.isArray(processes)) { processes = [processes]; }
             logger.debug(`Found ${processes.length} language_server process(es)`);
 
-            // Filter to only Antigravity processes (not Codeium)
-            const antigravityProcesses = processes.filter(
-                (proc: { CommandLine?: string; ProcessId?: number }) =>
-                    proc.CommandLine && this.isAntigravityProcess(proc.CommandLine)
+            const ag = processes.filter(
+                (p: { CommandLine?: string; ProcessId?: number }) =>
+                    p.CommandLine && this.isAntigravityProcess(p.CommandLine)
             );
+            logger.info(`${ag.length} Antigravity process(es) of ${processes.length} total`);
 
-            logger.info(`Found ${antigravityProcesses.length} Antigravity process(es) out of ${processes.length} total`);
-
-            for (const proc of antigravityProcesses) {
+            for (const proc of ag) {
                 if (proc.CommandLine && proc.ProcessId) {
                     const result = this.parseCommandLine(proc.ProcessId, proc.CommandLine);
-                    if (result) {
-                        return result;
-                    }
+                    if (result) { return result; }
                 }
             }
-
             return null;
         } catch (error) {
             logger.debug('Windows PowerShell process discovery failed', error instanceof Error ? error : undefined);
@@ -354,78 +314,65 @@ export class AntigravityClient {
     }
 
     /**
-     * Windows: Find process using WMIC (fallback for older systems).
+     * Windows: tasklist + findstr fallback. Works on Win11 23H2+ where WMIC is gone.
+     * Gets CommandLine via a second PowerShell call using just Get-Process (lighter).
      */
-    private async findProcessWindowsWmic(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
+    private async findProcessWindowsTasklist(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
-            const cmd = `wmic process where "name='${this.processName}'" get ProcessId,CommandLine /format:list`;
-            
-            logger.debug(`Executing WMIC command: ${cmd}`);
-            const { stdout } = await execAsync(cmd, { timeout: 10000 });
-            
-            if (!stdout.trim()) {
-                return null;
-            }
+            // Use tasklist to find PID, then Get-Process for CommandLine
+            const listCmd = `tasklist /FI "IMAGENAME eq ${this.processName}" /FO CSV /NH`;
+            const { stdout: listOut } = await execAsync(listCmd, EXEC_OPTS);
 
-            // Parse WMIC output (format: key=value pairs separated by blank lines)
-            const blocks = stdout.split(/\n\s*\n/).filter(block => block.trim().length > 0);
-            
-            for (const block of blocks) {
-                const pidMatch = block.match(/ProcessId=(\d+)/);
-                const cmdLineMatch = block.match(/CommandLine=(.+)/);
+            if (!listOut.trim() || listOut.includes('No tasks')) { return null; }
 
-                if (!pidMatch || !cmdLineMatch) {
-                    continue;
-                }
-
-                const commandLine = cmdLineMatch[1].trim();
-                
-                // Check if this is an Antigravity process
-                if (!this.isAntigravityProcess(commandLine)) {
-                    continue;
-                }
-
-                const pid = parseInt(pidMatch[1], 10);
-                const result = this.parseCommandLine(pid, commandLine);
-                if (result) {
-                    logger.info(`WMIC found Antigravity process PID: ${pid}`);
-                    return result;
+            // CSV format: "name","pid","session","#","mem"
+            const pids: number[] = [];
+            for (const line of listOut.split('\n')) {
+                const parts = line.split(',');
+                if (parts.length >= 2) {
+                    const pid = parseInt(parts[1].replace(/"/g, '').trim(), 10);
+                    if (!isNaN(pid)) { pids.push(pid); }
                 }
             }
 
+            if (pids.length === 0) { return null; }
+
+            for (const pid of pids) {
+                const cmdCmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \\"ProcessId=${pid}\\" | Select-Object -ExpandProperty CommandLine"`;
+                try {
+                    const { stdout: cmdOut } = await execAsync(cmdCmd, EXEC_OPTS);
+                    const cmdLine = cmdOut.trim();
+                    if (cmdLine && this.isAntigravityProcess(cmdLine)) {
+                        const result = this.parseCommandLine(pid, cmdLine);
+                        if (result) {
+                            logger.info(`tasklist fallback found Antigravity PID: ${pid}`);
+                            return result;
+                        }
+                    }
+                } catch { /* try next pid */ }
+            }
             return null;
         } catch (error) {
-            logger.debug('Windows WMIC process discovery failed', error instanceof Error ? error : undefined);
+            logger.debug('Windows tasklist fallback failed', error instanceof Error ? error : undefined);
             return null;
         }
     }
 
-    /**
-     * macOS: Find process using ps aux.
-     */
+    /** macOS: pgrep -fl with Antigravity filter. */
     private async findProcessMacOS(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
-            // Use ps aux to get all processes with full command line
-            const cmd = `ps aux | grep -v grep | grep '${this.processName}'`;
-            const { stdout } = await execAsync(cmd, { timeout: 5000 });
+            const cmd = `pgrep -fl ${this.processName}`;
+            const { stdout } = await execAsync(cmd, { timeout: 5000, maxBuffer: EXEC_OPTS.maxBuffer });
 
-            const lines = stdout.split('\n');
-            for (const line of lines) {
-                if (line.includes('--csrf_token')) {
-                    // macOS ps aux format: USER PID %CPU %MEM VSZ RSS TT STAT STARTED TIME COMMAND
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length >= 11) {
-                        const pid = parseInt(parts[1], 10);
-                        // Command line starts at index 10
-                        const cmdLine = parts.slice(10).join(' ');
-                        const result = this.parseCommandLine(pid, cmdLine);
-                        if (result) {
-                            return result;
-                        }
-                    }
-                }
+            for (const line of stdout.split('\n')) {
+                if (!line.includes('--extension_server_port')) { continue; }
+                if (!this.isAntigravityProcess(line)) { continue; }
+                const parts = line.trim().split(/\s+/);
+                const pid = parseInt(parts[0], 10);
+                const cmdLine = line.substring(parts[0].length).trim();
+                const result = this.parseCommandLine(pid, cmdLine);
+                if (result) { return result; }
             }
-
             return null;
         } catch (error) {
             logger.debug('macOS process discovery failed', error instanceof Error ? error : undefined);
@@ -433,27 +380,21 @@ export class AntigravityClient {
         }
     }
 
-    /**
-     * Linux: Find process using pgrep.
-     */
+    /** Linux: pgrep -af with Antigravity filter. */
     private async findProcessLinux(): Promise<Omit<ProcessInfo, 'connectPort' | 'protocol'> | null> {
         try {
             const cmd = `pgrep -af ${this.processName}`;
-            const { stdout } = await execAsync(cmd, { timeout: 5000 });
+            const { stdout } = await execAsync(cmd, { timeout: 5000, maxBuffer: EXEC_OPTS.maxBuffer });
 
-            const lines = stdout.split('\n');
-            for (const line of lines) {
-                if (line.includes('--extension_server_port')) {
-                    const parts = line.trim().split(/\s+/);
-                    const pid = parseInt(parts[0], 10);
-                    const cmdLine = line.substring(parts[0].length).trim();
-                    const result = this.parseCommandLine(pid, cmdLine);
-                    if (result) {
-                        return result;
-                    }
-                }
+            for (const line of stdout.split('\n')) {
+                if (!line.includes('--extension_server_port')) { continue; }
+                if (!this.isAntigravityProcess(line)) { continue; }
+                const parts = line.trim().split(/\s+/);
+                const pid = parseInt(parts[0], 10);
+                const cmdLine = line.substring(parts[0].length).trim();
+                const result = this.parseCommandLine(pid, cmdLine);
+                if (result) { return result; }
             }
-
             return null;
         } catch (error) {
             logger.debug('Linux process discovery failed', error instanceof Error ? error : undefined);
@@ -461,16 +402,12 @@ export class AntigravityClient {
         }
     }
 
-    /**
-     * Parses command line to extract port and CSRF token.
-     */
     private parseCommandLine(pid: number, cmdLine: string): Omit<ProcessInfo, 'connectPort' | 'protocol'> | null {
         const portMatch = cmdLine.match(/--extension_server_port[=\s]+(\d+)/);
-        // Use case-insensitive hex pattern for CSRF token (matches UUID format)
         const tokenMatch = cmdLine.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
 
         if (tokenMatch && tokenMatch[1]) {
-            logger.debug(`Parsed process: PID=${pid}, port=${portMatch ? portMatch[1] : 'N/A'}, csrf_token=${tokenMatch[1].substring(0, 8)}...`);
+            logger.debug(`Parsed: PID=${pid}, port=${portMatch?.[1] ?? 'N/A'}, csrf=${tokenMatch[1].substring(0, 8)}...`);
             return {
                 pid,
                 extensionPort: portMatch ? parseInt(portMatch[1], 10) : 0,
@@ -486,131 +423,90 @@ export class AntigravityClient {
     // Platform-Specific Port Discovery
     // =========================================================================
 
-    /**
-     * Gets listening ports for a process (platform-aware).
-     */
     private async getListeningPorts(pid: number): Promise<number[]> {
         switch (this.platform) {
-            case 'win32':
-                return this.getListeningPortsWindows(pid);
-            case 'darwin':
-                return this.getListeningPortsMacOS(pid);
-            default:
-                return this.getListeningPortsLinux(pid);
+            case 'win32':  return this.getListeningPortsWindows(pid);
+            case 'darwin': return this.getListeningPortsMacOS(pid);
+            default:       return this.getListeningPortsLinux(pid);
         }
     }
 
     /**
-     * Windows: Get listening ports using PowerShell with netstat fallback.
+     * Windows: Merge PowerShell + netstat results.
+     * PowerShell requires admin on some configs; netstat always works.
      */
     private async getListeningPortsWindows(pid: number): Promise<number[]> {
-        // Try PowerShell first
-        const psPorts = await this.getListeningPortsWindowsPowerShell(pid);
-        if (psPorts.length > 0) {
-            return psPorts;
-        }
+        const [psPorts, netstatPorts] = await Promise.all([
+            this.getListeningPortsWindowsPowerShell(pid),
+            this.getListeningPortsWindowsNetstat(pid),
+        ]);
 
-        // Fallback to netstat
-        logger.debug('PowerShell port discovery returned no results, trying netstat...');
-        return this.getListeningPortsWindowsNetstat(pid);
+        // Merge, deduplicate, sort
+        const merged = [...new Set([...psPorts, ...netstatPorts])].sort((a, b) => a - b);
+        logger.debug(`Windows ports (merged PS+netstat): [${merged.join(', ')}]`);
+        return merged;
     }
 
-    /**
-     * Windows: Get listening ports using PowerShell.
-     */
     private async getListeningPortsWindowsPowerShell(pid: number): Promise<number[]> {
         try {
-            // Use simpler command that works across more Windows versions
             const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -OwningProcess ${pid} -State Listen | Select-Object -ExpandProperty LocalPort | ConvertTo-Json"`;
-            
-            logger.debug(`Executing PowerShell port command: ${cmd}`);
-            const { stdout } = await execAsync(cmd, { timeout: 10000 });
+            logger.debug(`PowerShell port cmd for PID ${pid}`);
+            const { stdout } = await execAsync(cmd, EXEC_OPTS);
 
-            if (!stdout.trim()) {
-                return [];
+            if (!stdout.trim()) { return []; }
+
+            const data = JSON.parse(stdout.trim());
+            const ports: number[] = [];
+            if (Array.isArray(data)) {
+                for (const p of data) { if (typeof p === 'number') { ports.push(p); } }
+            } else if (typeof data === 'number') {
+                ports.push(data);
             }
-
-            try {
-                const data = JSON.parse(stdout.trim());
-                const ports: number[] = [];
-
-                if (Array.isArray(data)) {
-                    for (const port of data) {
-                        if (typeof port === 'number' && !ports.includes(port)) {
-                            ports.push(port);
-                        }
-                    }
-                } else if (typeof data === 'number') {
-                    ports.push(data);
-                }
-
-                logger.debug(`PowerShell found ports: [${ports.join(', ')}]`);
-                return ports.sort((a, b) => a - b);
-            } catch {
-                return [];
-            }
+            return [...new Set(ports)].sort((a, b) => a - b);
         } catch (error) {
             logger.debug('Windows PowerShell port discovery failed', error instanceof Error ? error : undefined);
             return [];
         }
     }
 
-    /**
-     * Windows: Get listening ports using netstat (fallback).
-     */
     private async getListeningPortsWindowsNetstat(pid: number): Promise<number[]> {
         try {
-            const cmd = `netstat -ano | findstr "${pid}"`;
-            
-            logger.debug(`Executing netstat command: ${cmd}`);
-            const { stdout } = await execAsync(cmd, { timeout: 10000 });
+            // Use /E (end-of-line anchor) to match PID exactly, preventing partial matches
+            const cmd = `netstat -ano | findstr "LISTENING" | findstr /E " ${pid}"`;
+            logger.debug(`Netstat port cmd for PID ${pid}`);
+            const { stdout } = await execAsync(cmd, EXEC_OPTS);
 
             const ports: number[] = [];
-            // Match listening ports for the given PID
-            // Format: TCP    127.0.0.1:42424        0.0.0.0:0              LISTENING       12345
-            // Match IPv4 (127.0.0.1, 0.0.0.0) and IPv6 ([::], [::1]) localhost addresses
-            const portRegex = new RegExp(`(?:127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1?\\]):(\\d+)\\s+(?:0\\.0\\.0\\.0:0|\\[::\\]:0|\\*:\\*).*?\\s+${pid}$`, 'gim');
+            // Match IPv4 (127.0.0.1, 0.0.0.0) and IPv6 ([::], [::1]) localhost
+            const portRegex = /(?:127\.0\.0\.1|0\.0\.0\.0|\[::1?\]):(\d+)/gi;
 
             let match;
             while ((match = portRegex.exec(stdout)) !== null) {
                 const port = parseInt(match[1], 10);
-                if (!ports.includes(port)) {
-                    ports.push(port);
-                }
+                if (!ports.includes(port)) { ports.push(port); }
             }
 
             logger.debug(`Netstat found ports: [${ports.join(', ')}]`);
             return ports.sort((a, b) => a - b);
         } catch (error) {
-            logger.debug('Windows netstat port discovery failed', error instanceof Error ? error : undefined);
+            // findstr exits 1 when no match — not a real error
+            logger.debug('Windows netstat port discovery returned no results');
             return [];
         }
     }
 
-    /**
-     * macOS: Get listening ports using lsof.
-     */
     private async getListeningPortsMacOS(pid: number): Promise<number[]> {
         try {
-            // lsof to find listening TCP ports for the process
-            const cmd = `lsof -iTCP -sTCP:LISTEN -P -n -p ${pid} 2>/dev/null`;
-            const { stdout } = await execAsync(cmd, { timeout: 5000 });
+            const cmd = `lsof -nP -a -iTCP -sTCP:LISTEN -p ${pid}`;
+            const { stdout } = await execAsync(cmd, { timeout: 5000, maxBuffer: EXEC_OPTS.maxBuffer });
 
             const ports: number[] = [];
-            const lines = stdout.split('\n');
-            
-            for (const line of lines) {
-                // lsof output format: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-                // NAME contains the address:port, e.g., *:42424 or 127.0.0.1:42424
-                const match = line.match(/:(\d+)\s*(\(LISTEN\))?$/);
-                if (match) {
-                    const port = parseInt(match[1], 10);
-                    if (!ports.includes(port)) {
-                        ports.push(port);
-                    }
-                }
+            const regex = new RegExp(`^\\S+\\s+${pid}\\s+.*?(?:TCP|UDP)\\s+(?:\\*|[\\d.]+|\\[[\\da-f:]+\\]):(\\d+)\\s+\\(LISTEN\\)`, 'gim');
+            let match;
+            while ((match = regex.exec(stdout)) !== null) {
+                const port = parseInt(match[1], 10);
+                if (!ports.includes(port)) { ports.push(port); }
             }
-
             return ports.sort((a, b) => a - b);
         } catch (error) {
             logger.debug('macOS port discovery failed', error instanceof Error ? error : undefined);
@@ -619,55 +515,37 @@ export class AntigravityClient {
     }
 
     /**
-     * Linux: Get listening ports using ss with lsof fallback.
+     * Linux: ss || lsof combined in a single shell command.
+     * Using "|| true" prevents grep's exit code 1 (no match) from throwing.
      */
     private async getListeningPortsLinux(pid: number): Promise<number[]> {
-        // Try ss first
         try {
-            const cmd = `ss -tlnp 2>/dev/null | grep "pid=${pid},"`;
-            const { stdout } = await execAsync(cmd, { timeout: 5000 });
+            const cmd = `(ss -tlnp 2>/dev/null | grep "pid=${pid}," || true) && (lsof -nP -a -iTCP -sTCP:LISTEN -p ${pid} 2>/dev/null || true)`;
+            const { stdout } = await execAsync(cmd, { timeout: 5000, maxBuffer: EXEC_OPTS.maxBuffer });
 
             const ports: number[] = [];
-            // Match ports from ss output
-            const regex = /LISTEN\s+\d+\s+\d+\s+(?:\*|[\d.]+|\[[\da-f:]*\]):(\d+).*?users:.*?,pid=(\d+),/gi;
 
+            // Parse ss output
+            const ssRegex = /LISTEN\s+\d+\s+\d+\s+(?:\*|[\d.]+|\[[\da-f:]*\]):(\d+).*?users:.*?,pid=(\d+),/gi;
             let match;
-            while ((match = regex.exec(stdout)) !== null) {
-                const port = parseInt(match[1], 10);
-                const matchedPid = parseInt(match[2], 10);
-                if (matchedPid === pid && !ports.includes(port)) {
-                    ports.push(port);
+            while ((match = ssRegex.exec(stdout)) !== null) {
+                if (parseInt(match[2], 10) === pid) {
+                    const port = parseInt(match[1], 10);
+                    if (!ports.includes(port)) { ports.push(port); }
                 }
             }
 
-            if (ports.length > 0) {
-                logger.debug(`ss found ports: [${ports.join(', ')}]`);
-                return ports.sort((a, b) => a - b);
-            }
-        } catch (error) {
-            logger.debug('Linux ss port discovery failed, trying lsof...', error instanceof Error ? error : undefined);
-        }
-
-        // Fallback to lsof
-        try {
-            const cmd = `lsof -nP -a -iTCP -sTCP:LISTEN -p ${pid} 2>/dev/null`;
-            const { stdout } = await execAsync(cmd, { timeout: 5000 });
-
-            const ports: number[] = [];
+            // Parse lsof output
             const lsofRegex = new RegExp(`^\\S+\\s+${pid}\\s+.*?(?:TCP|UDP)\\s+(?:\\*|[\\d.]+|\\[[\\da-f:]+\\]):(\\d+)\\s+\\(LISTEN\\)`, 'gim');
-
-            let match;
             while ((match = lsofRegex.exec(stdout)) !== null) {
                 const port = parseInt(match[1], 10);
-                if (!ports.includes(port)) {
-                    ports.push(port);
-                }
+                if (!ports.includes(port)) { ports.push(port); }
             }
 
-            logger.debug(`lsof found ports: [${ports.join(', ')}]`);
+            logger.debug(`Linux ports for PID ${pid}: [${ports.join(', ')}]`);
             return ports.sort((a, b) => a - b);
         } catch (error) {
-            logger.debug('Linux lsof port discovery failed', error instanceof Error ? error : undefined);
+            logger.debug('Linux port discovery failed', error instanceof Error ? error : undefined);
             return [];
         }
     }
@@ -676,43 +554,24 @@ export class AntigravityClient {
     // Port Testing & API Communication
     // =========================================================================
 
-    /**
-     * Tests ports to find one that responds.
-     */
-    private async findWorkingPort(ports: number[], csrfToken: string): Promise<{ port: number, protocol: 'http' | 'https' } | null> {
+    private async findWorkingPort(ports: number[], csrfToken: string): Promise<{ port: number; protocol: 'http' | 'https' } | null> {
         for (const port of ports) {
             const protocol = await this.testPort(port, csrfToken);
-            if (protocol) {
-                return { port, protocol };
-            }
+            if (protocol) { return { port, protocol }; }
         }
         return null;
     }
 
-    /**
-     * Tests if a port responds to Antigravity API requests via HTTPS or HTTP.
-     */
     private async testPort(port: number, csrfToken: string): Promise<'http' | 'https' | null> {
-        // Try HTTPS first
-        const isHttps = await this.testPortWithProtocol('https', port, csrfToken);
-        if (isHttps) {
-            return 'https';
-        }
-        // Fallback to HTTP
-        const isHttp = await this.testPortWithProtocol('http', port, csrfToken);
-        if (isHttp) {
-            return 'http';
-        }
+        // The reference extension always uses HTTPS — try it first
+        if (await this.testPortWithProtocol('https', port, csrfToken)) { return 'https'; }
+        if (await this.testPortWithProtocol('http', port, csrfToken)) { return 'http'; }
         return null;
     }
 
-    /**
-     * Helper to test a single port with a specific protocol.
-     */
     private testPortWithProtocol(protocol: 'http' | 'https', port: number, csrfToken: string): Promise<boolean> {
         return new Promise(resolve => {
             const data = JSON.stringify({ wrapper_data: {} });
-
             const options = {
                 hostname: '127.0.0.1',
                 port,
@@ -734,41 +593,24 @@ export class AntigravityClient {
                 res.on('data', chunk => (body += chunk));
                 res.on('end', () => {
                     if (res.statusCode === 200) {
-                        try {
-                            JSON.parse(body);
-                            resolve(true);
-                        } catch {
-                            resolve(false);
-                        }
+                        try { JSON.parse(body); resolve(true); } catch { resolve(false); }
                     } else {
                         resolve(false);
                     }
                 });
             });
-
             req.on('error', () => resolve(false));
-            req.on('timeout', () => {
-                req.destroy();
-                resolve(false);
-            });
-
+            req.on('timeout', () => { req.destroy(); resolve(false); });
             req.write(data);
             req.end();
         });
     }
 
-    /**
-     * Makes a request to the Antigravity API.
-     */
     private request<T>(path: string, body: object): Promise<T> {
         return new Promise((resolve, reject) => {
-            if (!this.processInfo) {
-                reject(new Error('Not connected'));
-                return;
-            }
+            if (!this.processInfo) { reject(new Error('Not connected')); return; }
 
             const data = JSON.stringify(body);
-
             const options = {
                 hostname: '127.0.0.1',
                 port: this.processInfo.connectPort,
@@ -789,29 +631,22 @@ export class AntigravityClient {
                 let body = '';
                 res.on('data', chunk => (body += chunk));
                 res.on('end', () => {
-                    try {
-                        resolve(JSON.parse(body) as T);
-                    } catch {
-                        reject(new Error('Invalid JSON response'));
-                    }
+                    try { resolve(JSON.parse(body) as T); }
+                    catch { reject(new Error('Invalid JSON response')); }
                 });
             });
-
             req.on('error', reject);
-            req.on('timeout', () => {
-                req.destroy();
-                reject(new Error('Request timeout'));
-            });
-
+            req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
             req.write(data);
             req.end();
         });
     }
 
-    /**
-     * Parses the Antigravity API response into QuotaInfo objects.
-     */
-    private parseResponse(data: AntigravityUserStatus): QuotaInfo[] {
+    // =========================================================================
+    // Response Parsing
+    // =========================================================================
+
+    private parseQuotas(data: AntigravityUserStatus): QuotaInfo[] {
         const models = data.userStatus?.cascadeModelConfigData?.clientModelConfigs || [];
 
         return models
@@ -821,62 +656,56 @@ export class AntigravityClient {
                 const modelId = m.modelOrAlias?.model || label.toLowerCase().replace(/\s+/g, '-');
                 const remainingFraction = m.quotaInfo?.remainingFraction ?? 1;
 
-                // Parse reset time
                 let resetTime: Date | null = null;
                 if (m.quotaInfo?.resetTime) {
-                    resetTime = new Date(m.quotaInfo.resetTime);
+                    const parsed = new Date(m.quotaInfo.resetTime);
+                    if (!isNaN(parsed.getTime())) { resetTime = parsed; }
                 }
-
-                // Infer pool ID from model label
-                const poolId = this.inferPoolId(label);
-
-                // Calculate remaining/capacity (Antigravity uses fraction, we'll use 100 as capacity)
-                const capacity = 100;
-                const remaining = Math.round(remainingFraction * capacity);
 
                 return QuotaHelpers.createQuotaInfo(
                     modelId,
                     label,
-                    poolId,
-                    remaining,
-                    capacity,
+                    this.inferPoolId(label),
+                    Math.round(remainingFraction * 100),
+                    100,
                     resetTime,
                     this.thresholds
                 );
             });
     }
 
+    private parsePromptCredits(data: AntigravityUserStatus): PromptCreditsInfo | undefined {
+        const planStatus = data.userStatus?.planStatus;
+        if (!planStatus) { return undefined; }
+
+        const available = Number(planStatus.availablePromptCredits);
+        const monthly = Number(planStatus.planInfo?.monthlyPromptCredits);
+
+        if (isNaN(available) || isNaN(monthly) || monthly <= 0) { return undefined; }
+
+        // Robust calculation: handle cases where user has rollover/flex credits
+        // (which can make available > monthly limit)
+        const effectiveMax = Math.max(monthly, available);
+        const remainingPercentage = Math.min(100, Math.max(0, (available / effectiveMax) * 100));
+        const usedPercentage = Math.min(100, Math.max(0, ((effectiveMax - available) / effectiveMax) * 100));
+
+        return {
+            available,
+            monthly,
+            usedPercentage,
+            remainingPercentage,
+        };
+    }
+
     private inferPoolId(label: string): string {
-        const lowerLabel = label.toLowerCase();
-
-        // Claude models share a pool
-        if (lowerLabel.includes('claude')) {
-            return 'claude-pool';
-        }
-
-        // Gemini Pro models (including numbered versions like Gemini 3 Pro)
-        if (lowerLabel.includes('gemini') && lowerLabel.includes('pro')) {
-            return 'gemini-pro-pool';
-        }
-
-        // Gemini Flash models
-        if (lowerLabel.includes('gemini') && lowerLabel.includes('flash')) {
-            return 'gemini-flash-pool';
-        }
-
-        // Other Gemini models
-        if (lowerLabel.includes('gemini')) {
-            return 'gemini-pool';
-        }
-
-        // GPT models
-        if (lowerLabel.includes('gpt')) {
-            return 'gpt-pool';
-        }
-
+        const l = label.toLowerCase();
+        if (l.includes('claude')) { return 'claude-pool'; }
+        if (l.includes('gemini') && l.includes('pro')) { return 'gemini-pro-pool'; }
+        if (l.includes('gemini') && l.includes('flash')) { return 'gemini-flash-pool'; }
+        if (l.includes('gemini')) { return 'gemini-pool'; }
+        if (l.includes('gpt')) { return 'gpt-pool'; }
         return 'default-pool';
     }
 }
 
-// Export singleton
 export const antigravityClient = AntigravityClient.getInstance();

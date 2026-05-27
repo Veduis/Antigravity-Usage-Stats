@@ -1,8 +1,8 @@
 {
   "name": "antigravity-usage-stats",
   "displayName": "Antigravity Usage Stats",
-  "description": "Monitor AI model usage quotas in VS Code with status bar indicators and quick access",
-  "version": "0.3.5",
+  "description": "Monitor AI model usage quotas in VS Code with status bar indicators, quick access, and prompt credit tracking",
+  "version": "0.4.0",
   "publisher": "Veduis",
   "license": "MIT",
   "icon": "icon.png",
@@ -23,7 +23,12 @@
     "quota",
     "dashboard",
     "monitoring",
-    "antigravity"
+    "antigravity",
+    "usage",
+    "credits",
+    "claude",
+    "gemini",
+    "gpt"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -42,6 +47,11 @@
         "category": "Antigravity Usage Stats"
       },
       {
+        "command": "antigravityUsageStats.reconnect",
+        "title": "Reconnect to Antigravity",
+        "category": "Antigravity Usage Stats"
+      },
+      {
         "command": "antigravityUsageStats.openLogs",
         "title": "Open Logs",
         "category": "Antigravity Usage Stats"
@@ -55,6 +65,11 @@
         "command": "antigravityUsageStats.unpinModel",
         "title": "Unpin Model from Status Bar",
         "category": "Antigravity Usage Stats"
+      },
+      {
+        "command": "antigravityUsageStats.export",
+        "title": "Export Quota Data",
+        "category": "Antigravity Usage Stats"
       }
     ],
     "keybindings": [
@@ -67,49 +82,46 @@
     "configuration": {
       "title": "Antigravity Usage Stats",
       "properties": {
+        "antigravityUsageStats.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable or disable quota tracking. When `false`, no API calls are made and the status bar is hidden."
+        },
         "antigravityUsageStats.refreshInterval": {
           "type": "number",
           "default": 120,
           "minimum": 10,
           "maximum": 3600,
-          "description": "Seconds between auto-refreshes"
-        },
-        "antigravityUsageStats.statusBarFormat": {
-          "type": "string",
-          "default": "dot-percent",
-          "enum": [
-            "icon",
-            "dot",
-            "percent",
-            "dot-percent",
-            "name-percent",
-            "full"
-          ],
-          "description": "Format of the status bar display"
-        },
-        "antigravityUsageStats.groupingEnabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Group models by quota pools in QuickPick view"
+          "markdownDescription": "How often (in seconds) to refresh quota data from Antigravity.\n\n**Recommended:** `120` for normal use, `30` for heavy usage monitoring."
         },
         "antigravityUsageStats.warningThreshold": {
           "type": "number",
           "default": 30,
           "minimum": 0,
           "maximum": 100,
-          "description": "Yellow alert threshold (%)"
+          "markdownDescription": "Show a ⚠️ **yellow warning** when a model's remaining quota drops **below** this percentage.\n\nExample: `30` = warn when less than 30% of quota remains."
         },
         "antigravityUsageStats.criticalThreshold": {
           "type": "number",
           "default": 10,
           "minimum": 0,
           "maximum": 100,
-          "description": "Red alert threshold (%)"
+          "markdownDescription": "Show a 🔴 **red critical alert** when a model's remaining quota drops **below** this percentage.\n\nExample: `10` = critical alert when less than 10% remains."
         },
         "antigravityUsageStats.notificationsEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show quota alerts"
+          "description": "Show VS Code notification pop-ups when a model reaches warning or critical quota levels."
+        },
+        "antigravityUsageStats.showPromptCredits": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show your remaining prompt credits in the Quick Access menu and status bar tooltip.\n\n⚠️ **Note:** This option is disabled by default because these values are supplied by the local language server cache and may sometimes display outdated, legacy, or static limits (such as 500 / 50,000) that do not match your live online billing dashboard."
+        },
+        "antigravityUsageStats.groupingEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Group models by quota pool in the Quick Access menu (e.g. all Claude models together)."
         },
         "antigravityUsageStats.statusBarModels": {
           "type": "array",
@@ -118,7 +130,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Models to display in the status bar. Use 'Pin Model to Status Bar' command to add models dynamically."
+          "markdownDescription": "Models pinned to the status bar. **Use the Quick Access menu (`Ctrl+Shift+Q`) to pin/unpin models** instead of editing this directly."
         }
       }
     }

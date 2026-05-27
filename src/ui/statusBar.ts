@@ -1,33 +1,30 @@
 import * as vscode from 'vscode';
-import { logger } from '../services/logger';
-import { QuotaInfo, QuotaStatus, QuotaHelpers, FetchResult } from '../data';
+import { logger, stateManager } from '../services';
+import { QuotaInfo, QuotaStatus, QuotaHelpers, FetchResult, PromptCreditsInfo } from '../data';
 import { pollingManager } from '../data/pollingManager';
+import { antigravityClient, ConnectionStatus } from '../data/antigravityClient';
 
-/**
- * Status bar display format options.
- */
 export type StatusBarFormat = 'icon' | 'dot' | 'percent' | 'dot-percent' | 'name-percent' | 'full';
 
-/**
- * Individual model status bar item.
- */
 interface ModelStatusBarItem {
     item: vscode.StatusBarItem;
     modelName: string;
 }
 
 /**
- * Manages the status bar items for quota display.
+ * Manages status bar items for quota display.
+ * Shows loading/error/connected states with appropriate icons.
  */
 export class StatusBarProvider {
     private static instance: StatusBarProvider;
     private mainStatusBarItem: vscode.StatusBarItem;
     private modelStatusBarItems: ModelStatusBarItem[] = [];
     private currentQuotas: QuotaInfo[] = [];
+    private promptCredits: PromptCreditsInfo | undefined;
     private context: vscode.ExtensionContext | null = null;
+    private connectionStatus: ConnectionStatus = 'disconnected';
 
     private constructor() {
-        // Create main "Usage" status bar item on the right side
         this.mainStatusBarItem = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Right,
             100
@@ -36,9 +33,6 @@ export class StatusBarProvider {
         this.mainStatusBarItem.name = 'Antigravity Usage Stats';
     }
 
-    /**
-     * Gets the singleton instance.
-     */
     public static getInstance(): StatusBarProvider {
         if (!StatusBarProvider.instance) {
             StatusBarProvider.instance = new StatusBarProvider();
@@ -46,14 +40,11 @@ export class StatusBarProvider {
         return StatusBarProvider.instance;
     }
 
-    /**
-     * Initializes the status bar provider.
-     */
     public initialize(context: vscode.ExtensionContext): void {
         this.context = context;
         context.subscriptions.push(this.mainStatusBarItem);
 
-        // Listen for configuration changes
+        // Config changes
         context.subscriptions.push(
             vscode.workspace.onDidChangeConfiguration(e => {
                 if (e.affectsConfiguration('antigravityUsageStats.statusBarModels') ||
@@ -64,8 +55,14 @@ export class StatusBarProvider {
             })
         );
 
-        // Listen for quota updates
+        // Quota updates from polling
         pollingManager.addListener(result => this.onQuotaUpdate(result));
+
+        // Connection status changes for loading/error indicator
+        antigravityClient.onStatusChange(status => {
+            this.connectionStatus = status;
+            this.updateMainItem();
+        });
 
         this.mainStatusBarItem.show();
         this.rebuildModelStatusBars();
@@ -73,81 +70,76 @@ export class StatusBarProvider {
         logger.info('StatusBarProvider initialized');
     }
 
-    /**
-     * Updates the status bar with current quota data.
-     */
-    public update(quotas: QuotaInfo[]): void {
+    public update(quotas: QuotaInfo[], promptCredits?: PromptCreditsInfo): void {
         this.currentQuotas = quotas;
-        this.rebuildModelStatusBars();
+        this.promptCredits = promptCredits;
+
+        // Auto-pin check: If no models are configured yet, auto-pin the first 3 discovered models
+        // so the user sees active quotas immediately without having to configure anything!
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        const statusBarModels = config.get<string[]>('statusBarModels', []);
+        
+        if (statusBarModels.length === 0 && quotas.length > 0 && !stateManager.get('hasInitializedPins')) {
+            const defaultModels = quotas.slice(0, 3).map(q => q.modelName);
+            logger.info(`Auto-pinning first active models: ${defaultModels.join(', ')}`);
+            config.update('statusBarModels', defaultModels, vscode.ConfigurationTarget.Global).then(() => {
+                stateManager.set('hasInitializedPins', true);
+                this.rebuildModelStatusBars();
+                this.updateDisplay();
+            });
+            return;
+        }
+
+        // Only rebuild pinned bars when config changes, not on every data update
         this.updateDisplay();
     }
 
-    /**
-     * Shows all status bar items.
-     */
     public show(): void {
         this.mainStatusBarItem.show();
-        this.modelStatusBarItems.forEach(item => item.item.show());
+        this.modelStatusBarItems.forEach(i => i.item.show());
     }
 
-    /**
-     * Hides all status bar items.
-     */
     public hide(): void {
         this.mainStatusBarItem.hide();
-        this.modelStatusBarItems.forEach(item => item.item.hide());
+        this.modelStatusBarItems.forEach(i => i.item.hide());
     }
 
-    /**
-     * Disposes all status bar items.
-     */
     public dispose(): void {
         this.mainStatusBarItem.dispose();
         this.disposeModelStatusBars();
     }
 
-    /**
-     * Handles quota update events from polling manager.
-     */
     private onQuotaUpdate(result: FetchResult): void {
         if (result.success) {
-            this.update(result.quotas);
+            this.update(result.quotas, result.promptCredits);
+        } else {
+            // Keep stale quota display but show error state on main button
+            this.updateMainItem();
         }
     }
 
-    /**
-     * Disposes all model-specific status bar items.
-     */
     private disposeModelStatusBars(): void {
-        this.modelStatusBarItems.forEach(item => item.item.dispose());
+        this.modelStatusBarItems.forEach(i => i.item.dispose());
         this.modelStatusBarItems = [];
     }
 
-    /**
-     * Rebuilds the model-specific status bar items based on settings.
-     */
+    /** Only rebuild model bars when the pinned set has actually changed. */
     private rebuildModelStatusBars(): void {
         const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const statusBarModels = config.get<string[]>('statusBarModels', []);
 
-        // Get current model names that are pinned
         const currentPinned = new Set(this.modelStatusBarItems.map(m => m.modelName));
         const targetPinned = new Set(statusBarModels);
 
-        // Check if we need to rebuild
         const needsRebuild =
             currentPinned.size !== targetPinned.size ||
             ![...currentPinned].every(m => targetPinned.has(m));
 
-        if (!needsRebuild) {
-            return;
-        }
+        if (!needsRebuild) { return; }
 
-        // Dispose old items
         this.disposeModelStatusBars();
 
-        // Create new items for each pinned model
-        let priority = 99; // Just below the main "Usage" button
+        let priority = 99;
         for (const modelName of statusBarModels) {
             const item = vscode.window.createStatusBarItem(
                 vscode.StatusBarAlignment.Right,
@@ -156,37 +148,50 @@ export class StatusBarProvider {
             item.command = 'antigravityUsageStats.showQuotas';
             item.name = `Antigravity: ${modelName}`;
 
-            if (this.context) {
-                this.context.subscriptions.push(item);
-            }
-
-            this.modelStatusBarItems.push({
-                item,
-                modelName,
-            });
-
+            if (this.context) { this.context.subscriptions.push(item); }
+            this.modelStatusBarItems.push({ item, modelName });
             item.show();
         }
-
         logger.debug(`Rebuilt ${statusBarModels.length} model status bar items`);
     }
 
-    /**
-     * Updates the display based on current quota data.
-     */
     private updateDisplay(): void {
-        // Update main "Usage" button
-        if (this.currentQuotas.length === 0) {
-            this.mainStatusBarItem.text = '$(pulse) Usage';
-            this.mainStatusBarItem.tooltip = 'No quota data available. Click to show quotas.';
-            this.mainStatusBarItem.backgroundColor = undefined;
-        } else {
-            this.mainStatusBarItem.text = '$(pulse) Usage';
-            this.mainStatusBarItem.tooltip = this.formatTooltip();
-            this.mainStatusBarItem.backgroundColor = undefined;
-        }
+        this.updateMainItem();
+        this.updateModelItems();
+    }
 
-        // Update individual model status bar items
+    /** Main "Usage" button — shows connecting/error/data states. */
+    private updateMainItem(): void {
+        switch (this.connectionStatus) {
+            case 'connecting':
+                this.mainStatusBarItem.text = '$(sync~spin) Usage';
+                this.mainStatusBarItem.tooltip = 'Connecting to Antigravity...';
+                this.mainStatusBarItem.backgroundColor = undefined;
+                break;
+            case 'error':
+                this.mainStatusBarItem.text = '$(error) Usage';
+                this.mainStatusBarItem.tooltip = 'Antigravity connection error — click to retry';
+                this.mainStatusBarItem.backgroundColor =
+                    new vscode.ThemeColor('statusBarItem.errorBackground');
+                break;
+            case 'disconnected':
+                this.mainStatusBarItem.text = '$(debug-disconnect) Usage';
+                this.mainStatusBarItem.tooltip = 'Not connected to Antigravity — click to reconnect';
+                this.mainStatusBarItem.backgroundColor = undefined;
+                break;
+            default: // connected
+                if (this.currentQuotas.length === 0) {
+                    this.mainStatusBarItem.text = '$(pulse) Usage';
+                    this.mainStatusBarItem.tooltip = 'No quota data — click to refresh';
+                } else {
+                    this.mainStatusBarItem.text = '$(pulse) Usage';
+                    this.mainStatusBarItem.tooltip = this.formatTooltip();
+                }
+                this.mainStatusBarItem.backgroundColor = undefined;
+        }
+    }
+
+    private updateModelItems(): void {
         for (const modelItem of this.modelStatusBarItems) {
             const quota = this.currentQuotas.find(q =>
                 q.modelName.toLowerCase() === modelItem.modelName.toLowerCase() ||
@@ -198,7 +203,6 @@ export class StatusBarProvider {
                 const percent = Math.round(quota.percentRemaining);
                 const dot = this.getStatusDot(quota.status);
                 const shortName = this.getShortName(quota.modelName);
-
                 modelItem.item.text = `${dot} ${shortName}: ${percent}%`;
                 modelItem.item.tooltip = this.formatModelTooltip(quota);
                 modelItem.item.backgroundColor = this.getBackgroundColor(quota.status);
@@ -210,11 +214,7 @@ export class StatusBarProvider {
         }
     }
 
-    /**
-     * Gets a short display name for a model.
-     */
     private getShortName(name: string): string {
-        // Dynamic shortening - works with any model name from the API
         const short = name
             .replace(/^Gemini\s+/i, 'G')
             .replace(/^Claude\s+/i, 'C')
@@ -222,64 +222,47 @@ export class StatusBarProvider {
             .replace(/\(High\)/i, 'H')
             .replace(/\(Low\)/i, 'L')
             .replace(/\s+/g, ' ');
-
         return short.length > 20 ? short.substring(0, 18) + '..' : short;
     }
 
-    /**
-     * Formats tooltip for a single model.
-     */
     private formatModelTooltip(quota: QuotaInfo): string {
         const icon = QuotaHelpers.getStatusIcon(quota.status);
         const percent = Math.round(quota.percentRemaining);
-        const reset = quota.resetInSeconds
-            ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
-            : 'Unknown';
-
-        return `${icon} ${quota.modelName}\n${percent}% remaining\nResets in: ${reset}\n\nClick to show quotas`;
+        return `${icon} ${quota.modelName}\n${percent}% remaining\nResets: ${quota.resetFormatted}\n\nClick to show quotas`;
     }
 
-    /**
-     * Formats the full tooltip with all quota information.
-     */
     private formatTooltip(): string {
         const lines = ['**Antigravity Usage Stats**\n'];
+
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        const showCredits = config.get<boolean>('showPromptCredits', false);
+
+        if (this.promptCredits && showCredits) {
+            const pc = this.promptCredits;
+            lines.push(`💳 Credits: ${pc.available.toLocaleString()} / ${pc.monthly.toLocaleString()} (${Math.round(pc.remainingPercentage)}% remaining)`);
+            lines.push('');
+        }
 
         for (const quota of this.currentQuotas) {
             const icon = QuotaHelpers.getStatusIcon(quota.status);
             const percent = Math.round(quota.percentRemaining);
-            const reset = quota.resetInSeconds
-                ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
-                : 'Unknown';
-
-            lines.push(`${icon} ${quota.modelName}: ${percent}% (resets in ${reset})`);
+            lines.push(`${icon} ${quota.modelName}: ${percent}% (${quota.resetFormatted})`);
         }
 
         lines.push('\n*Click to show quotas*');
         return lines.join('\n');
     }
 
-    /**
-     * Gets the status dot character.
-     */
     private getStatusDot(status: QuotaStatus): string {
         switch (status) {
-            case QuotaStatus.HEALTHY:
-                return '🟢';
-            case QuotaStatus.WARNING:
-                return '🟡';
-            case QuotaStatus.CRITICAL:
-                return '🔴';
-            case QuotaStatus.EXHAUSTED:
-                return '⚫';
-            default:
-                return '⚪';
+            case QuotaStatus.HEALTHY:   return '🟢';
+            case QuotaStatus.WARNING:   return '🟡';
+            case QuotaStatus.CRITICAL:  return '🔴';
+            case QuotaStatus.EXHAUSTED: return '⚫';
+            default:                    return '⚪';
         }
     }
 
-    /**
-     * Gets background color for error states.
-     */
     private getBackgroundColor(status: QuotaStatus): vscode.ThemeColor | undefined {
         if (status === QuotaStatus.CRITICAL || status === QuotaStatus.EXHAUSTED) {
             return new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -291,5 +274,4 @@ export class StatusBarProvider {
     }
 }
 
-// Export singleton
 export const statusBarProvider = StatusBarProvider.getInstance();

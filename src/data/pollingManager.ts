@@ -2,36 +2,36 @@ import * as vscode from 'vscode';
 import { logger } from '../services/logger';
 import { quotaFetcher } from './quotaFetcher';
 import { FetchResult } from './models';
+import { antigravityClient } from './antigravityClient';
 
-/**
- * Event emitter for quota updates.
- */
 export type QuotaUpdateListener = (result: FetchResult) => void;
 
+/** Auto-reconnect delay in ms after a failed fetch. */
+const RECONNECT_DELAY_MS = 8000;
+
 /**
- * Service for managing periodic polling of quota data.
+ * Manages periodic polling of quota data.
+ * Handles auto-reconnect when connection is lost (e.g. after laptop sleep/resume).
  */
 export class PollingManager {
     private static instance: PollingManager;
     private timer: NodeJS.Timeout | null = null;
+    private reconnectTimer: NodeJS.Timeout | null = null;
     private intervalSeconds: number = 120;
     private listeners: Set<QuotaUpdateListener> = new Set();
     private isPaused: boolean = false;
     private lastPollTime: Date | null = null;
+    private consecutiveFailures: number = 0;
 
     private constructor() {
-        // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('antigravityUsageStats.refreshInterval')) {
-                this.updateIntervalFromConfig();
-                this.restart();
+            if (e.affectsConfiguration('antigravityUsageStats.refreshInterval') ||
+                e.affectsConfiguration('antigravityUsageStats.enabled')) {
+                this.handleConfigChange();
             }
         });
     }
 
-    /**
-     * Gets the singleton instance.
-     */
     public static getInstance(): PollingManager {
         if (!PollingManager.instance) {
             PollingManager.instance = new PollingManager();
@@ -39,10 +39,12 @@ export class PollingManager {
         return PollingManager.instance;
     }
 
-    /**
-     * Starts the polling timer.
-     */
     public start(): void {
+        if (!this.isEnabled()) {
+            logger.info('Polling disabled via settings, skipping start');
+            return;
+        }
+
         if (this.timer) {
             logger.debug('Polling already running');
             return;
@@ -51,110 +53,103 @@ export class PollingManager {
         this.updateIntervalFromConfig();
         logger.info(`Starting polling with ${this.intervalSeconds}s interval`);
 
-        // Do an immediate fetch
+        // Immediate fetch on start
         this.poll();
 
-        // Start the timer
         this.timer = setInterval(() => {
-            if (!this.isPaused) {
-                this.poll();
-            }
+            if (!this.isPaused) { this.poll(); }
         }, this.intervalSeconds * 1000);
     }
 
-    /**
-     * Stops the polling timer.
-     */
     public stop(): void {
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
             logger.info('Polling stopped');
         }
+        this.clearReconnectTimer();
     }
 
-    /**
-     * Restarts the polling timer with current configuration.
-     */
     public restart(): void {
         this.stop();
         this.start();
     }
 
-    /**
-     * Pauses polling without stopping the timer.
-     */
     public pause(): void {
         this.isPaused = true;
         logger.debug('Polling paused');
     }
 
-    /**
-     * Resumes polling.
-     */
     public resume(): void {
         this.isPaused = false;
         logger.debug('Polling resumed');
     }
 
-    /**
-     * Triggers an immediate poll.
-     */
     public async pollNow(): Promise<FetchResult> {
         return this.poll();
     }
 
-    /**
-     * Adds a listener for quota updates.
-     */
+    /** Force-reconnect to Antigravity and then poll. */
+    public async reconnect(): Promise<void> {
+        logger.info('Manual reconnect triggered');
+        this.consecutiveFailures = 0;
+        this.clearReconnectTimer();
+        antigravityClient.disconnect();
+        await this.poll();
+    }
+
     public addListener(listener: QuotaUpdateListener): void {
         this.listeners.add(listener);
     }
 
-    /**
-     * Removes a listener.
-     */
     public removeListener(listener: QuotaUpdateListener): void {
         this.listeners.delete(listener);
     }
 
-    /**
-     * Gets the polling interval in seconds.
-     */
-    public getInterval(): number {
-        return this.intervalSeconds;
+    public getInterval(): number { return this.intervalSeconds; }
+    public getLastPollTime(): Date | null { return this.lastPollTime; }
+    public isRunning(): boolean { return this.timer !== null; }
+
+    private isEnabled(): boolean {
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        return config.get<boolean>('enabled', true);
     }
 
-    /**
-     * Gets the time of the last poll.
-     */
-    public getLastPollTime(): Date | null {
-        return this.lastPollTime;
+    private handleConfigChange(): void {
+        if (this.isEnabled()) {
+            this.updateIntervalFromConfig();
+            this.restart();
+        } else {
+            this.stop();
+        }
     }
 
-    /**
-     * Checks if polling is currently running.
-     */
-    public isRunning(): boolean {
-        return this.timer !== null;
-    }
-
-    /**
-     * Updates the interval from VS Code configuration.
-     */
     private updateIntervalFromConfig(): void {
         const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const interval = config.get<number>('refreshInterval', 120);
-
-        // Clamp to valid range (10-3600 seconds)
         this.intervalSeconds = Math.max(10, Math.min(3600, interval));
-
         logger.debug(`Polling interval set to ${this.intervalSeconds}s`);
     }
 
-    /**
-     * Performs a poll and notifies listeners.
-     */
+    private clearReconnectTimer(): void {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+    }
+
+    /** Schedules an auto-reconnect attempt after failures. */
+    private scheduleReconnect(): void {
+        this.clearReconnectTimer();
+        const delay = Math.min(RECONNECT_DELAY_MS * this.consecutiveFailures, 60000);
+        logger.info(`Auto-reconnect scheduled in ${delay / 1000}s (failure #${this.consecutiveFailures})`);
+        this.reconnectTimer = setTimeout(async () => {
+            logger.info('Auto-reconnect: attempting to reconnect...');
+            antigravityClient.disconnect();
+            await this.poll();
+        }, delay);
+    }
+
     private async poll(): Promise<FetchResult> {
         logger.debug('Polling for quota data...');
         this.lastPollTime = new Date();
@@ -162,18 +157,27 @@ export class PollingManager {
         try {
             const result = await quotaFetcher.fetch();
 
-            // Notify all listeners
+            if (result.success) {
+                this.consecutiveFailures = 0;
+                this.clearReconnectTimer();
+            } else {
+                this.consecutiveFailures++;
+                // Auto-reconnect on repeated failures (handles sleep/resume)
+                if (this.consecutiveFailures >= 2) {
+                    this.scheduleReconnect();
+                }
+            }
+
             for (const listener of this.listeners) {
-                try {
-                    listener(result);
-                } catch (error) {
-                    logger.error('Error in quota update listener', error instanceof Error ? error : undefined);
+                try { listener(result); } catch (e) {
+                    logger.error('Error in quota update listener', e instanceof Error ? e : undefined);
                 }
             }
 
             return result;
         } catch (error) {
             logger.error('Polling failed', error instanceof Error ? error : undefined);
+            this.consecutiveFailures++;
 
             const errorResult: FetchResult = {
                 success: false,
@@ -183,12 +187,9 @@ export class PollingManager {
                 timestamp: new Date(),
             };
 
-            // Still notify listeners of failure
             for (const listener of this.listeners) {
-                try {
-                    listener(errorResult);
-                } catch (e) {
-                    logger.error('Error in quota update listener', e instanceof Error ? e : undefined);
+                try { listener(errorResult); } catch (e) {
+                    logger.error('Error in listener', e instanceof Error ? e : undefined);
                 }
             }
 
@@ -197,5 +198,4 @@ export class PollingManager {
     }
 }
 
-// Export singleton
 export const pollingManager = PollingManager.getInstance();

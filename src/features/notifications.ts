@@ -191,8 +191,8 @@ export class NotificationManager {
      * Shows an exhausted notification.
      */
     private showExhaustedNotification(quota: QuotaInfo): void {
-        const resetInfo = quota.resetInSeconds
-            ? `Resets in ${this.formatResetTime(quota.resetInSeconds)}`
+        const resetInfo = quota.resetFormatted !== 'Unknown'
+            ? `Resets in ${quota.resetFormatted}`
             : 'Reset time unknown';
         const message = `⛔ ${quota.modelName}: Quota exhausted! ${resetInfo}`;
 
@@ -207,18 +207,6 @@ export class NotificationManager {
         logger.warn(`Exhausted notification shown for ${quota.modelName}`);
     }
 
-    /**
-     * Formats reset time for display.
-     */
-    private formatResetTime(seconds: number): string {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-
-        if (hours > 0) {
-            return `${hours}h ${minutes}m`;
-        }
-        return `${minutes}m`;
-    }
 
     /**
      * Clears notification state for a model.

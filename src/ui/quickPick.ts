@@ -1,63 +1,47 @@
 import * as vscode from 'vscode';
-import { QuotaInfo, QuotaHelpers, QuotaStatus, FetchResult, QuotaGroup } from '../data';
+import { QuotaInfo, QuotaHelpers, QuotaStatus, FetchResult, QuotaGroup, PromptCreditsInfo } from '../data';
 import { quotaGrouper } from '../data/quotaGrouper';
 import { pollingManager } from '../data/pollingManager';
+import { antigravityClient } from '../data/antigravityClient';
 
-/**
- * QuickPick item with quota data.
- */
 interface QuotaQuickPickItem extends vscode.QuickPickItem {
     quotaId?: string;
-    action?: 'refresh' | 'settings' | 'logs' | 'pin' | 'unpin';
+    action?: 'refresh' | 'reconnect' | 'settings' | 'logs' | 'export';
 }
 
-/**
- * Progress bar configuration.
- */
-const PROGRESS_BAR = {
-    filled: '█',
-    empty: '░',
-    length: 10,
-};
+const PROGRESS_BAR = { filled: '█', empty: '░', length: 10 };
 
-/**
- * Status emoji mapping for visual appeal.
- */
-const STATUS_EMOJI = {
-    [QuotaStatus.HEALTHY]: '🟢',
-    [QuotaStatus.WARNING]: '🟡',
-    [QuotaStatus.CRITICAL]: '🔴',
+const STATUS_EMOJI: Record<QuotaStatus, string> = {
+    [QuotaStatus.HEALTHY]:   '🟢',
+    [QuotaStatus.WARNING]:   '🟡',
+    [QuotaStatus.CRITICAL]:  '🔴',
     [QuotaStatus.EXHAUSTED]: '⚫',
-    [QuotaStatus.UNKNOWN]: '⚪',
+    [QuotaStatus.UNKNOWN]:   '⚪',
 };
 
-/**
- * Pool icons for different quota pools.
- */
 const POOL_ICONS: Record<string, string> = {
-    'claude-pool': '🤖',
-    'gemini-pro-pool': '✨',
+    'claude-pool':       '🤖',
+    'gemini-pro-pool':   '✨',
     'gemini-flash-pool': '⚡',
-    'gemini-pool': '🪐',
-    'gpt-pool': '🧠',
-    'default-pool': '📦',
+    'gemini-pool':       '🪐',
+    'gpt-pool':          '🧠',
+    'default-pool':      '📦',
 };
 
 /**
- * Provides a keyboard-friendly QuickPick interface for quota viewing.
+ * Keyboard-friendly QuickPick interface.
+ * Features: inline pin toggle, prompt credits, absolute reset times,
+ * connection status header, export action.
  */
 export class QuickPickProvider {
     private static instance: QuickPickProvider;
     private currentQuotas: QuotaInfo[] = [];
+    private promptCredits: PromptCreditsInfo | undefined;
 
     private constructor() {
-        // Listen for quota updates
         pollingManager.addListener(result => this.onQuotaUpdate(result));
     }
 
-    /**
-     * Gets the singleton instance.
-     */
     public static getInstance(): QuickPickProvider {
         if (!QuickPickProvider.instance) {
             QuickPickProvider.instance = new QuickPickProvider();
@@ -65,191 +49,201 @@ export class QuickPickProvider {
         return QuickPickProvider.instance;
     }
 
-    /**
-     * Shows the QuickPick dashboard.
-     */
+    /** Shows the QuickPick dashboard. Stays open after pin toggles. */
     public async show(): Promise<void> {
-        const items = this.buildItems();
+        const pick = vscode.window.createQuickPick<QuotaQuickPickItem>();
+        pick.title = '✦ Antigravity Usage Stats';
+        pick.placeholder = 'Select a model to pin/unpin · Choose an action above';
+        pick.matchOnDescription = true;
+        pick.matchOnDetail = true;
 
-        const selected = await vscode.window.showQuickPick(items, {
-            title: '✦ Antigravity Usage Stats',
-            placeHolder: 'Select a model to view details or choose an action',
-            matchOnDescription: true,
-            matchOnDetail: true,
+        const refresh = () => { pick.items = this.buildItems(); };
+        refresh();
+
+        let activeItem: QuotaQuickPickItem | undefined;
+        pick.onDidChangeActive(items => { activeItem = items[0]; });
+
+        pick.onDidAccept(async () => {
+            const item = activeItem ?? pick.activeItems[0];
+            if (!item) { return; }
+
+            if (item.action) {
+                pick.hide();
+                await this.handleAction(item.action);
+                return;
+            }
+
+            // Inline pin toggle for model items
+            if (item.quotaId) {
+                await this.togglePin(item.quotaId);
+                refresh(); // Stay open, update checkmarks
+            }
         });
 
-        if (selected) {
-            await this.handleSelection(selected);
-        }
+        pick.onDidHide(() => pick.dispose());
+        pick.show();
     }
 
-    /**
-     * Updates the current quota data.
-     */
-    public update(quotas: QuotaInfo[]): void {
-        this.currentQuotas = quotas;
-    }
-
-    /**
-     * Handles quota update events.
-     */
     private onQuotaUpdate(result: FetchResult): void {
         if (result.success) {
             this.currentQuotas = result.quotas;
+            this.promptCredits = result.promptCredits;
         }
     }
 
-    /**
-     * Builds a Unicode progress bar.
-     */
     private buildProgressBar(percent: number): string {
         const filled = Math.round((percent / 100) * PROGRESS_BAR.length);
         const empty = PROGRESS_BAR.length - filled;
         return PROGRESS_BAR.filled.repeat(filled) + PROGRESS_BAR.empty.repeat(empty);
     }
 
-    /**
-     * Gets the pool icon for a pool ID.
-     */
     private getPoolIcon(poolId: string): string {
         return POOL_ICONS[poolId] || POOL_ICONS['default-pool'];
     }
 
-    /**
-     * Formats a group separator with statistics.
-     */
-    private formatGroupSeparator(group: QuotaGroup): string {
-        const poolIcon = this.getPoolIcon(group.poolId);
-        const groupName = group.customName || group.groupName;
-        const modelCount = group.models.length;
-        const avgPercent = Math.round(group.percentRemaining);
-        const statusEmoji = STATUS_EMOJI[group.status];
-        
-        return `${poolIcon} ${groupName}  ─  ${modelCount} model${modelCount !== 1 ? 's' : ''} ${statusEmoji} ${avgPercent}%`;
+    private getPinnedModels(): Set<string> {
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        return new Set(config.get<string[]>('statusBarModels', []));
     }
 
-    /**
-     * Builds QuickPick items from current data.
-     */
+    private async togglePin(modelId: string): Promise<void> {
+        const quota = this.currentQuotas.find(q => q.modelId === modelId);
+        if (!quota) { return; }
+
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
+        const pinned = config.get<string[]>('statusBarModels', []);
+        const isPinned = pinned.includes(quota.modelName);
+        const newPinned = isPinned
+            ? pinned.filter(n => n !== quota.modelName)
+            : [...pinned, quota.modelName];
+
+        await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
+        const action = isPinned ? 'Unpinned' : 'Pinned';
+        vscode.window.showInformationMessage(`${action} ${quota.modelName} ${isPinned ? 'from' : 'to'} status bar`);
+    }
+
     private buildItems(): QuotaQuickPickItem[] {
         const items: QuotaQuickPickItem[] = [];
+        const isConnected = antigravityClient.isConnected();
+        const status = antigravityClient.status;
 
-        // Add action items at the top with enhanced styling
+        // Connection status header
+        const statusText = status === 'connected' ? '$(check) Connected'
+            : status === 'connecting' ? '$(sync~spin) Connecting...'
+            : status === 'error' ? '$(error) Connection Error'
+            : '$(debug-disconnect) Disconnected';
+
+        items.push({
+            label: statusText,
+            description: isConnected
+                ? `${this.currentQuotas.length} model${this.currentQuotas.length !== 1 ? 's' : ''} tracked`
+                : 'Run "Reconnect" to retry',
+            alwaysShow: true,
+            kind: vscode.QuickPickItemKind.Separator,
+        } as QuotaQuickPickItem);
+
+        // Action buttons
         items.push(
-            {
-                label: '$(sync~spin) Refresh',
-                description: 'Fetch latest quota data',
-                action: 'refresh',
-                alwaysShow: true,
-            },
-            {
-                label: '$(pin) Pin Model',
-                description: 'Add model to status bar',
-                action: 'pin',
-                alwaysShow: true,
-            },
-            {
-                label: '$(pinned) Unpin Model',
-                description: 'Remove from status bar',
-                action: 'unpin',
-                alwaysShow: true,
-            },
-            {
-                label: '$(settings-gear) Settings',
-                description: 'Configure extension',
-                action: 'settings',
-                alwaysShow: true,
-            },
-            {
-                label: '$(terminal) View Logs',
-                description: 'Open extension logs',
-                action: 'logs',
-                alwaysShow: true,
-            }
+            { label: '$(sync~spin) Refresh', description: 'Fetch latest quota data', action: 'refresh', alwaysShow: true },
+            { label: '$(debug-disconnect) Reconnect', description: 'Re-detect Antigravity process', action: 'reconnect', alwaysShow: true },
+            { label: '$(cloud-download) Export', description: 'Save quotas to JSON or CSV', action: 'export', alwaysShow: true },
+            { label: '$(settings-gear) Settings', description: 'Configure extension', action: 'settings', alwaysShow: true },
+            { label: '$(terminal) View Logs', description: 'Open extension logs', action: 'logs', alwaysShow: true },
         );
 
-        // Add separator before quotas
+        const showCredits = config.get<boolean>('showPromptCredits', false);
+
+        // Prompt credits section
+        if (this.promptCredits && showCredits) {
+            const pc = this.promptCredits;
+            const bar = this.buildProgressBar(pc.remainingPercentage);
+            items.push({
+                label: '💳 Prompt Credits',
+                kind: vscode.QuickPickItemKind.Separator,
+            } as QuotaQuickPickItem);
+            items.push({
+                label: `💳 ${pc.available.toLocaleString()} / ${pc.monthly.toLocaleString()} credits`,
+                description: `${bar} ${Math.round(pc.remainingPercentage)}% remaining`,
+                detail: `${Math.round(pc.usedPercentage)}% used this billing cycle`,
+                alwaysShow: true,
+            });
+        }
+
+        // Quota models
         items.push({
-            label: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+            label: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
             kind: vscode.QuickPickItemKind.Separator,
         } as QuotaQuickPickItem);
 
         if (this.currentQuotas.length === 0) {
             items.push({
-                label: '⚠️ No quota data available',
-                description: 'Press Enter on Refresh to fetch data',
-                detail: 'Make sure Antigravity is running in VS Code',
+                label: isConnected ? '⏳ Waiting for quota data...' : '⚠️ No quota data available',
+                description: isConnected ? 'Data will appear shortly' : 'Click Reconnect above',
+                detail: 'Make sure Antigravity is running',
                 alwaysShow: true,
             });
             return items;
         }
 
-        // Group quotas
         const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const thresholds = {
             warning: config.get<number>('warningThreshold', 30),
             critical: config.get<number>('criticalThreshold', 10),
         };
+        const pinned = this.getPinnedModels();
         const groups = quotaGrouper.groupByPool(this.currentQuotas, thresholds);
 
-        // Add quota items by group with enhanced formatting
         for (const group of groups) {
-            // Add enhanced group header
             items.push({
-                label: this.formatGroupSeparator(group),
+                label: this.formatGroupHeader(group),
                 kind: vscode.QuickPickItemKind.Separator,
             } as QuotaQuickPickItem);
 
-            // Add models in group
             for (const quota of group.models) {
-                items.push(this.buildQuotaItem(quota));
+                items.push(this.buildQuotaItem(quota, pinned));
             }
         }
 
         return items;
     }
 
-    /**
-     * Builds a QuickPick item for a quota with enhanced visuals.
-     */
-    private buildQuotaItem(quota: QuotaInfo): QuotaQuickPickItem {
+    private formatGroupHeader(group: QuotaGroup): string {
+        const icon = this.getPoolIcon(group.poolId);
+        const name = group.customName || group.groupName;
+        const count = group.models.length;
+        const pct = Math.round(group.percentRemaining);
+        const emoji = STATUS_EMOJI[group.status];
+        return `${icon} ${name}  ─  ${count} model${count !== 1 ? 's' : ''} ${emoji} ${pct}%`;
+    }
+
+    private buildQuotaItem(quota: QuotaInfo, pinned: Set<string>): QuotaQuickPickItem {
         const statusEmoji = STATUS_EMOJI[quota.status];
         const percent = Math.round(quota.percentRemaining);
-        const progressBar = this.buildProgressBar(percent);
-        const resetInfo = quota.resetInSeconds
-            ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
-            : '—';
-
-        // Build rich description with progress bar
-        const description = `${progressBar} ${percent}%`;
-        
-        // Build detailed info line
-        const detail = `⏱ Resets in ${resetInfo}  ·  ${quota.remaining}/${quota.capacity} requests`;
+        const bar = this.buildProgressBar(percent);
+        const isPinned = pinned.has(quota.modelName);
+        const pinIcon = isPinned ? '$(pinned)' : '$(pin)';
 
         return {
             label: `${statusEmoji} ${quota.modelName}`,
-            description,
-            detail,
+            description: `${bar} ${percent}%   ${pinIcon}`,
+            detail: `⏱ ${quota.resetFormatted}  ·  ${quota.remaining}/${quota.capacity} requests`,
             quotaId: quota.modelId,
         };
     }
 
-    /**
-     * Handles selection of a QuickPick item.
-     */
-    private async handleSelection(item: QuotaQuickPickItem): Promise<void> {
-        switch (item.action) {
+    private async handleAction(action: string): Promise<void> {
+        switch (action) {
             case 'refresh':
                 await pollingManager.pollNow();
                 vscode.window.showInformationMessage('✅ Quota data refreshed!');
-                // Re-show the QuickPick with updated data
                 await this.show();
-                return; // Exit early to prevent fall-through
-            case 'pin':
-                await vscode.commands.executeCommand('antigravityUsageStats.pinModel');
                 break;
-            case 'unpin':
-                await vscode.commands.executeCommand('antigravityUsageStats.unpinModel');
+            case 'reconnect':
+                await vscode.commands.executeCommand('antigravityUsageStats.reconnect');
+                await this.show();
+                break;
+            case 'export':
+                await vscode.commands.executeCommand('antigravityUsageStats.export');
                 break;
             case 'settings':
                 await vscode.commands.executeCommand('workbench.action.openSettings', 'antigravityUsageStats');
@@ -257,57 +251,8 @@ export class QuickPickProvider {
             case 'logs':
                 await vscode.commands.executeCommand('antigravityUsageStats.openLogs');
                 break;
-            default:
-                if (item.quotaId) {
-                    // Show details for selected model
-                    await this.showModelDetails(item.quotaId);
-                }
-        }
-    }
-
-    /**
-     * Shows detailed information for a specific model with enhanced formatting.
-     */
-    private async showModelDetails(modelId: string): Promise<void> {
-        const quota = this.currentQuotas.find(q => q.modelId === modelId);
-        if (!quota) return;
-
-        const statusEmoji = STATUS_EMOJI[quota.status];
-        const percent = Math.round(quota.percentRemaining);
-        const progressBar = this.buildProgressBar(percent);
-        const resetInfo = quota.resetInSeconds
-            ? QuotaHelpers.formatResetCountdown(quota.resetInSeconds)
-            : 'Unknown';
-
-        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
-        const statusBarModels = config.get<string[]>('statusBarModels', []);
-        const isPinned = statusBarModels.includes(quota.modelName);
-
-        // Enhanced message with visual elements
-        const message = [
-            `${statusEmoji} ${quota.modelName}`,
-            `${progressBar} ${percent}%`,
-            `📊 ${quota.remaining}/${quota.capacity} requests`,
-            `⏱ Resets in ${resetInfo}`,
-        ].join('\n');
-
-        const action = await vscode.window.showInformationMessage(
-            message,
-            isPinned ? 'Unpin from Status Bar' : 'Pin to Status Bar',
-            'Close'
-        );
-
-        if (action === 'Pin to Status Bar') {
-            const newPinned = [...statusBarModels, quota.modelName];
-            await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
-            vscode.window.showInformationMessage(`📌 Pinned ${quota.modelName} to status bar`);
-        } else if (action === 'Unpin from Status Bar') {
-            const newPinned = statusBarModels.filter(name => name !== quota.modelName);
-            await config.update('statusBarModels', newPinned, vscode.ConfigurationTarget.Global);
-            vscode.window.showInformationMessage(`📍 Unpinned ${quota.modelName} from status bar`);
         }
     }
 }
 
-// Export singleton
 export const quickPickProvider = QuickPickProvider.getInstance();
