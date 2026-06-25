@@ -4,6 +4,11 @@ All notable changes to the Antigravity Usage Stats project will be documented in
 
 ---
 
+## [2026-06-25] - Version 0.4.1
+
+### 🐛 Bug Fixes
+- **Fixed QuickPick Dashboard ReferenceError**: Resolved the `"Cannot access 'config' before initialization"` error that was thrown when clicking the "models/usage" status bar item (which executes the `showQuotas` command). This reference error was previously intercepted by the command error handler and displayed to the user as a generic "Antigravity usage stats configuration error please check your settings" error. The fix initializes the `config` variable at the start of the `buildItems()` method in [quickPick.ts](file:///home/vedupro/Desktop/Dev/Software%20Dev/AntiGravityUsageStats/Antigravity-Usage-Stats/src/ui/quickPick.ts).
+
 ## [2026-05-27] - Version 0.4.0 — Full Audit Overhaul
 
 ### 🔴 Windows Bug Fixes
