@@ -123,6 +123,7 @@ export class QuickPickProvider {
     }
 
     private buildItems(): QuotaQuickPickItem[] {
+        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const items: QuotaQuickPickItem[] = [];
         const isConnected = antigravityClient.isConnected();
         const status = antigravityClient.status;
@@ -185,7 +186,6 @@ export class QuickPickProvider {
             return items;
         }
 
-        const config = vscode.workspace.getConfiguration('antigravityUsageStats');
         const thresholds = {
             warning: config.get<number>('warningThreshold', 30),
             critical: config.get<number>('criticalThreshold', 10),
